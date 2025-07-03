@@ -1,0 +1,20 @@
+{
+  "Reservations": [
+    {
+      "Instances": [
+        {
+          "InstanceId": "i-0123456789abcdef0",
+          "InstanceType": "t2.small",
+          "Tags": [
+            { "Key": "Name", "Value": "example-instance" },
+            { "Key": "Env",  "Value": "staging" }
+          ],
+          "SecurityGroups": [
+            { "GroupId": "sg-0123456789abcdef0", "GroupName": "default" },
+            { "GroupId": "sg-0fedcba9876543210", "GroupName": "extra-sg" }
+          ]
+        }
+      ]
+    }
+  ]
+}
