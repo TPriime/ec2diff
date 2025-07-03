@@ -1,0 +1,6 @@
+# Ignore Terraform attribute files
+sample/terraform/*.tfstate.*
+crash.log
+.terraform/
+terraform.tfvars
+.terraform.lock.hcl

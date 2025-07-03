@@ -4,43 +4,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/tpriime/ec2diff/pkg"
 )
 
-// State mirrors the Terraform state JSON structure minimally
-type State struct {
-	Resources []struct {
-		Type      string `json:"type"`
-		Instances []struct {
-			Attributes map[string]interface{} `json:"attributes"`
-		} `json:"instances"`
-	} `json:"resources"`
-}
-
 // ParseState reads the JSON state and returns a map from instanceID to attributes
-func ParseState(path string) (map[string]map[string]interface{}, error) {
+func ParseState(path string) (map[string]pkg.Instance, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var st State
+	var st state
 	if err := json.Unmarshal(data, &st); err != nil {
 		return nil, err
 	}
-	out := make(map[string]map[string]interface{})
+
+	out := map[string]pkg.Instance{}
 	for _, res := range st.Resources {
 		if res.Type != "aws_instance" {
 			continue
 		}
 		for _, inst := range res.Instances {
-			idRaw, ok := inst.Attributes["id"]
-			if !ok {
-				continue
-			}
-			id, ok := idRaw.(string)
-			if !ok {
-				continue
-			}
-			out[id] = inst.Attributes
+			out[inst.Attributes.ID] = inst.toInstance()
 		}
 	}
 	if len(out) == 0 {

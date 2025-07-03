@@ -3,6 +3,8 @@ package terraform
 import (
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseState(t *testing.T) {
@@ -29,11 +31,12 @@ func TestParseState(t *testing.T) {
 	tmp.Write([]byte(content))
 	tmp.Close()
 
-	m, err := ParseState(tmp.Name())
+	instances, err := ParseState(tmp.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m["i-123"]["instance_type"] != "t2.micro" {
-		t.Errorf("expected t2.micro, got %v", m["i-123"]["instance_type"])
-	}
+
+	assert.Len(t, instances, 1)
+	assert.Contains(t, instances, "i-123")
+	assert.Equal(t, "t2.micro", instances["i-123"].Type)
 }

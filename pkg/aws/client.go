@@ -7,7 +7,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/tpriime/ec2diff/pkg"
 )
+
+var ErrNotFound = fmt.Errorf("aws instance not found")
 
 // EC2API defines methods we need from AWS
 type EC2API interface {
@@ -34,20 +37,54 @@ func NewClient(region string) (*Client, error) {
 }
 
 // GetInstance fetches a single EC2 instance by ID
-func (c *Client) GetInstance(ctx context.Context, instanceID string) (*types.Instance, error) {
+func (c *Client) GetInstance(ctx context.Context, instanceID string) (*pkg.Instance, error) {
 	out, err := c.EC2.DescribeInstances(ctx,
-		&ec2.DescribeInstancesInput{
-			InstanceIds: []string{instanceID},
-		})
+		&ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}},
+	)
 	if err != nil {
 		return nil, err
 	}
 	for _, res := range out.Reservations {
 		for _, inst := range res.Instances {
 			if *inst.InstanceId == instanceID {
-				return &inst, nil
+				return typeToInstance(inst), nil
 			}
 		}
 	}
-	return nil, fmt.Errorf("instance %s not found", instanceID)
+	return nil, ErrNotFound
+}
+
+func typeToInstance(inst types.Instance) *pkg.Instance {
+	tags := map[string]string{}
+	for _, t := range inst.Tags {
+		tags[valstr(t.Key)] = valstr(t.Value)
+	}
+
+	var state string
+	if inst.State != nil {
+		state = string(inst.State.Name)
+	}
+
+	sgs := []string{}
+	for _, sg := range inst.SecurityGroups {
+		sgs = append(sgs, valstr(sg.GroupName))
+	}
+
+	return &pkg.Instance{
+		ID:             valstr(inst.InstanceId),
+		Type:           string(inst.InstanceType),
+		State:          state,
+		KeyName:        valstr(inst.KeyName),
+		Tags:           tags,
+		SecurityGroups: sgs,
+		PublicIP:       valstr(inst.PublicIpAddress),
+	}
+}
+
+// valstr safely converts pointer strings to string
+func valstr(ptr *string) (s string) {
+	if ptr != nil {
+		s = *ptr
+	}
+	return
 }
