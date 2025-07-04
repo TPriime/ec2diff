@@ -1,5 +1,6 @@
 # Ignore Terraform attribute files
-sample/terraform/*.tfstate.*
+example/terraform/*.tfstate.*
+example/terraform/*.tfstate
 crash.log
 .terraform/
 terraform.tfvars

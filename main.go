@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -60,19 +59,9 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	// decide which IDs to process
-	selectedInstances := []pkg.Instance{}
-	if len(instanceIDs) != 0 {
-		for _, i := range instanceIDs {
-			if inst, ok := stateInstances[i]; ok {
-				selectedInstances = append(selectedInstances, inst)
-			} else {
-				log.Fatalf("instance not found in terraform state, instaneID: %s", i)
-			}
-		}
-	} else {
-		for _, inst := range stateInstances {
-			selectedInstances = append(selectedInstances, inst)
-		}
+	selectedInstances, err := filterInstances(stateInstances, instanceIDs)
+	if err != nil {
+		log.Fatalf("failed to filter instances: %v", err)
 	}
 
 	// AWS client
@@ -85,6 +74,7 @@ func run(cmd *cobra.Command, args []string) {
 	var wg sync.WaitGroup
 	results := make(chan drift.Report, len(selectedInstances))
 
+	// find instances on aws and check for drift
 	ctx := context.Background()
 	for _, instance := range selectedInstances {
 		wg.Add(1)
@@ -109,11 +99,30 @@ func run(cmd *cobra.Command, args []string) {
 		close(results)
 	}()
 
-	// collect and output JSON
-	all := []drift.Report{}
+	// collect and print results
 	for r := range results {
-		all = append(all, r)
+		r.Print(os.Stdout)
 	}
-	out, _ := json.MarshalIndent(all, "", "  ")
-	fmt.Println(string(out))
+}
+
+func filterInstances(stateInstances map[string]pkg.Instance, ids []string) ([]pkg.Instance, error) {
+	selectedInstances := []pkg.Instance{}
+
+	// select all instances if none is specified
+	if len(instanceIDs) == 0 {
+		for _, inst := range stateInstances {
+			selectedInstances = append(selectedInstances, inst)
+		}
+		return selectedInstances, nil
+	}
+
+	for _, i := range instanceIDs {
+		if inst, ok := stateInstances[i]; ok {
+			selectedInstances = append(selectedInstances, inst)
+		} else {
+			return nil, fmt.Errorf("instance not found in terraform state, instaneID: %s", i)
+		}
+	}
+
+	return selectedInstances, nil
 }

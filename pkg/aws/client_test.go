@@ -19,7 +19,7 @@ func (m *mockEC2API) DescribeInstances(_ context.Context, _ *ec2.DescribeInstanc
 	return m.output, m.err
 }
 
-func TestGetInstanceFromClient_Success(t *testing.T) {
+func TestGetInstance_Success(t *testing.T) {
 	mockEC2 := &mockEC2API{
 		output: &ec2.DescribeInstancesOutput{
 			Reservations: []ec2Types.Reservation{
@@ -68,7 +68,7 @@ func ptrStr(s string) *string {
 	return &s
 }
 
-func TestGetInstanceFromClient_NotFound(t *testing.T) {
+func TestGetInstance_NotFound(t *testing.T) {
 	client := &Client{
 		EC2: &mockEC2API{
 			output: &ec2.DescribeInstancesOutput{
@@ -82,7 +82,7 @@ func TestGetInstanceFromClient_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestGetInstanceFromClient_DescribeError(t *testing.T) {
+func TestGetInstance_DescribeError(t *testing.T) {
 	client := &Client{
 		EC2: &mockEC2API{
 			output: nil,

@@ -15,12 +15,6 @@ type AttributeDrift struct {
 	Actual   any    `json:"actual"`
 }
 
-// Report captures drift for one instance
-type Report struct {
-	InstanceID string           `json:"instance_id"`
-	Drifts     []AttributeDrift `json:"drifts"`
-}
-
 // CheckDrift compares AWS vs Terraform-state for one instance
 func CheckDrift(ctx context.Context,
 	instanceA pkg.Instance,
