@@ -2,58 +2,68 @@ package drift
 
 import (
 	"context"
-	"slices"
+	"errors"
+	"fmt"
+	"sync"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/tpriime/ec2diff/pkg"
 )
 
-// AttributeDrift describes an attribute mismatch
-type AttributeDrift struct {
-	Name     string `json:"name"`
-	Expected any    `json:"expected"`
-	Actual   any    `json:"actual"`
-}
+// CheckDrift concurrently checks for configuration drift between a list of target EC2 instances
+// and their corresponding instances retrieved from AWS using the provided API client. It compares
+// the specified attributes for each instance and returns a slice of Report objects summarizing
+// the drift status. If an instance is not found on AWS, it is treated as deleted and compared
+// against an empty instance. Any errors encountered during retrieval (other than not found)
+// will cause the function to panic.
+//
+// Parameters:
+//   - api: An implementation of pkg.Client used to fetch instance data from AWS.
+//   - targetInstances: A slice of pkg.Instance representing the desired state of instances.
+//   - attributes: A slice of strings specifying which attributes to compare for drift.
+//
+// Returns:
+//   - A slice of Report objects, each representing the drift comparison result for an instance.
+func CheckDrift(api pkg.Client, targetInstances []pkg.Instance, attributes []string) []Report {
+	// drift detection concurrently
+	var wg sync.WaitGroup
+	results := make(chan Report, len(targetInstances))
+	errChan := make(chan error, len(targetInstances))
 
-// CheckDrift compares AWS vs Terraform-state for one instance
-func CheckDrift(ctx context.Context,
-	instanceA pkg.Instance,
-	instanceB pkg.Instance,
-	attrs []string,
-) Report {
-	if len(attrs) == 0 {
-		attrs = pkg.SupportedAttributes()
+	// find instances on aws and check for drift
+	ctx := context.Background()
+	for _, instance := range targetInstances {
+		wg.Add(1)
+		go func(target pkg.Instance) {
+			defer wg.Done()
+			awsIntance, err := api.GetInstance(ctx, target.ID)
+			if err != nil {
+				if errors.Is(err, pkg.ErrNotFound) {
+					awsIntance = &pkg.Instance{} // instance is deleted, use empty object
+				} else {
+					errChan <- fmt.Errorf("failed to fetch instance %s from remote: %v", target.ID, err)
+					return
+				}
+			}
+			report := CompareInstances(ctx, target, *awsIntance, attributes)
+			results <- report
+		}(instance)
 	}
 
-	drifts := comp(instanceA.ToState(), instanceB.ToState(), attrs)
+	go func() {
+		wg.Wait()
+		close(results)
+		close(errChan)
+	}()
 
-	return Report{
-		InstanceID: instanceA.ID,
-		Drifts:     drifts,
-	}
-}
-
-// Compare maps and return mismatched keys
-func comp(a, b pkg.State, attrs []string) []AttributeDrift {
-	drifts := []AttributeDrift{}
-	for attr, valueA := range a {
-		if !slices.Contains(attrs, attr) { // ignore non-specified attributes
-			continue
-		}
-		valueB, ok := b[attr]
-		if !ok || !cmp.Equal(valueA, valueB) {
-			drifts = append(drifts, AttributeDrift{Name: attr, Expected: a[attr], Actual: b[attr]})
+	reports := []Report{}
+	// Collect results and errors efficiently
+	for i := 0; i < len(targetInstances); i++ {
+		select {
+		case r := <-results:
+			reports = append(reports, r)
+		case err := <-errChan:
+			panic(err)
 		}
 	}
-
-	// check for new attributes in B, missing in A
-	for attr := range b {
-		if !slices.Contains(attrs, attr) { // ignore non-specified attributes
-			continue
-		}
-		if _, ok := a[attr]; !ok {
-			drifts = append(drifts, AttributeDrift{Name: attr, Expected: "<empty>", Actual: b[attr]})
-		}
-	}
-	return drifts
+	return reports
 }

@@ -2,90 +2,96 @@ package drift
 
 import (
 	"context"
-	"fmt"
-	"slices"
+	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tpriime/ec2diff/pkg"
 )
 
-func TestCheckDrift(t *testing.T) {
-	a := pkg.Instance{
-		ID:   "222",
-		Type: "t2.small",
-	}
-
-	b := pkg.Instance{
-		ID:   "222",
-		Type: "t2.micro",
-	}
-	report := CheckDrift(context.Background(), a, b, []string{"instance_type", "tags", "sg"})
-	assert.Len(t, report.Drifts, 1, "expected 1 drift (instance_type)")
+// MockClient implements pkg.Client for testing
+type MockClient struct {
+	Instances map[string]*pkg.Instance
+	Err       error
+	mu        sync.Mutex
+	Calls     []string
 }
 
-func TestCheckDrift_NoDrift(t *testing.T) {
-	a := pkg.Instance{
-		ID:   "222",
-		Type: "t2.small",
+func (m *MockClient) GetInstance(ctx context.Context, id string) (*pkg.Instance, error) {
+	m.mu.Lock()
+	m.Calls = append(m.Calls, id)
+	m.mu.Unlock()
+	if m.Err != nil {
+		return nil, m.Err
 	}
-
-	b := pkg.Instance{
-		ID:   "222",
-		Type: "t2.small",
+	inst, ok := m.Instances[id]
+	if !ok {
+		return nil, pkg.ErrNotFound
 	}
-	report := CheckDrift(context.Background(), a, b, []string{"instance_type", "tags", "sg"})
-	assert.Len(t, report.Drifts, 0, "expected 1 drift (instance_type)")
+	return inst, nil
 }
 
-func TestCheckDrift_Attributes(t *testing.T) {
-	a := pkg.Instance{
-		ID:    "222",
-		Type:  "t2.micro",
-		State: "stopped",
+func TestCheckDrift_AllInstancesFound_ReturnsReports(t *testing.T) {
+	client := &MockClient{
+		Instances: map[string]*pkg.Instance{
+			"i-1": {ID: "i-1", Type: "t3.micro"},
+			"i-2": {ID: "i-2"},
+		},
 	}
-	b := pkg.Instance{
-		ID:    "222",
-		Type:  "t2.small",
-		State: "running",
-	}
-
-	for name, attrs := range map[string][]string{
-		"subset 1": {pkg.InstanceType},
-		"subset 2": {pkg.InstanceType, pkg.InstanceState},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			report := CheckDrift(t.Context(), a, b, attrs)
-			assert.Len(t, report.Drifts, len(attrs))
-			for _, d := range report.Drifts {
-				if !slices.Contains(attrs, d.Name) {
-					assert.Fail(t, fmt.Sprintf("drift name outside given attributes %v", attrs))
-				}
-			}
-		})
+	targets := []pkg.Instance{
+		{ID: "i-1", Type: "t2.small"},
+		{ID: "i-2", State: "running"},
 	}
 
-	t.Run("should check all attributes if empty list is given", func(t *testing.T) {
-		report := CheckDrift(t.Context(), a, b, []string{})
-		assert.Len(t, report.Drifts, 2, "should detect 2 differences")
-	})
+	reports := CheckDrift(client, targets, []string{})
+	
+	assert.Len(t, reports, 2)
+	for _, r := range reports {
+		assert.Contains(t, []string{"i-1", "i-2"}, r.InstanceID)
+		assert.NotEmpty(t, r.Drifts, r.InstanceID+" should have drifts")
+	}
 }
 
-func TestCheckDrift_AttributesAll(t *testing.T) {
-	t.Run("should check all attributes if empty list is given", func(t *testing.T) {
-		a := pkg.Instance{
-			ID:    "222",
-			Type:  "t2.micro",
-			State: "stopped",
-		}
-		b := pkg.Instance{
-			ID:    "222",
-			Type:  "t2.small",
-			State: "running",
-		}
+func TestCheckDrift_InstanceNotFound_ReturnsDeletedReport(t *testing.T) {
+	client := &MockClient{
+		Instances: map[string]*pkg.Instance{},
+	}
+	targets := []pkg.Instance{
+		{ID: "i-missing", Type: "t2.small"},
+	}
+	
+	reports := CheckDrift(client, targets, []string{pkg.InstanceType})
+	
+	assert.Len(t, reports, 1)
+	assert.Equal(t, "t2.small", reports[0].Drifts[0].Expected)
+	assert.Equal(t, "", reports[0].Drifts[0].Actual)
+}
 
-		report := CheckDrift(t.Context(), a, b, []string{})
-		assert.Len(t, report.Drifts, 2, "should detect 2 differences")
-	})
+func TestCheckDrift_RemoteError_Fatals(t *testing.T) {
+	client := &MockClient{
+		Err: errors.New("unexpected"),
+	}
+	targets := []pkg.Instance{
+		{ID: "i-err"},
+	}
+	
+	assert.Panics(t, func() {
+		CheckDrift(client, targets, []string{"Type"})
+	}, "expected fatal error")
+}
+
+func TestCheckDrift_HandleMissingInstance(t *testing.T) {
+	client := &MockClient{
+		Err: pkg.ErrNotFound,
+	}
+	targets := []pkg.Instance{
+		{ID: "i-deleted", Type: "t2.small"},
+	}
+
+	reports := CheckDrift(client, targets, []string{pkg.InstanceType})
+	
+	assert.Len(t, reports, 1)
+	assert.Equal(t, "t2.small", reports[0].Drifts[0].Expected)
+	assert.Equal(t, "", reports[0].Drifts[0].Actual)
 }

@@ -2,7 +2,6 @@ package aws
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -10,7 +9,7 @@ import (
 	"github.com/tpriime/ec2diff/pkg"
 )
 
-var ErrNotFound = fmt.Errorf("aws instance not found")
+var ErrNotFound = pkg.ErrNotFound
 
 // EC2API defines methods we need from AWS
 type EC2API interface {
@@ -27,7 +26,7 @@ type Client struct {
 }
 
 // NewClient loads AWS config and returns a Client
-func NewClient(region string) (*Client, error) {
+func NewClient(region string) (pkg.Client, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
 	if err != nil {
 		return nil, err

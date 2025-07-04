@@ -5,6 +5,7 @@
         {
           "InstanceId": "i-0123456789abcdef0",
           "InstanceType": "t2.small",
+		      "KeyName": "test-key",
           "Tags": [
             { "Key": "Name", "Value": "example-instance" },
             { "Key": "Env",  "Value": "staging" }

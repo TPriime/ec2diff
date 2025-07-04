@@ -5,3 +5,5 @@ crash.log
 .terraform/
 terraform.tfvars
 .terraform.lock.hcl
+ec2diff
+__debug_*

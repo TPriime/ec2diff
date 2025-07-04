@@ -1,11 +1,10 @@
 # ec2diff
 
-`ec2diff` is a command-line tool written in Go for comparing the state of AWS EC2 instances between two points in time or between two AWS accounts/regions. It helps DevOps engineers and cloud administrators quickly identify changes in EC2 infrastructure, such as instance launches, terminations, or modifications.
+`ec2diff` is a command-line tool written in Go for comparing the state of AWS EC2 instances with terraform state or hcl file. It helps DevOps engineers and cloud administrators quickly identify changes in EC2 infrastructure, such as instance launches, terminations, or modifications.
 
 ## Features
 
-- List EC2 instances in a given AWS account/region.
-- Compare EC2 instance states between two snapshots or environments.
+- Compare EC2 instance states between aws and the give terraform state or hcl file.
 - Output differences in a human-readable format.
 - Supports filtering by tags, instance states, or other attributes.
 
@@ -13,7 +12,7 @@
 
 1. **Clone the repository:**
    ```sh
-   git clone https://github.com/yourusername/ec2diff.git
+   git clone https://github.com/tpriime/ec2diff.git
    cd ec2diff
    ```
 
@@ -22,78 +21,111 @@
    go build -o ec2diff
    ```
 
-3. **(Optional) Install globally:**
+   Or, using Docker:
    ```sh
-   sudo mv ec2diff /usr/local/bin/
+   docker build -t ec2diff .
    ```
 
 ## Usage
 
+
+### 🔐 AWS Authentication Setup
+
+This tool uses the **AWS SDK for Go v2**, which follows the standard AWS CLI authentication methods.
+
+Authenticate by setting the following env variables in your terminal:
+
+```bash
+export AWS_ACCESS_KEY_ID=your-access-key
+export AWS_SECRET_ACCESS_KEY=your-secret-key
+export AWS_REGION=your-aws-region
+```
+
+or by setting the equivalent profile:
+```bash
+export AWS_PROFILE=your-profile
+```
+
 ### Basic Usage
-
 ```sh
-./ec2diff --region us-east-1 snapshot1.json snapshot2.json
+./ec2diff --attrs "instance_type,tags" --hcl ./example/resources/instance.hcl --instances="i-0eb39d79613c9e43a"
 ```
 
-- `--region`: AWS region to query (e.g., `us-east-1`).
-- `snapshot1.json` and `snapshot2.json`: JSON files containing EC2 instance snapshots.
-
-### Creating Snapshots
-
-To create a snapshot of your current EC2 instances:
+Or, using Docker:
 
 ```sh
-./ec2diff snapshot --region us-east-1 --output snapshot1.json
+docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+   -v $(pwd):/data ec2diff \
+   --attrs "instance_type,tags" \
+   --hcl /data/example/resources/instance.hcl \
+   --instances="i-0eb39d79613c9e43a"
 ```
 
-### Comparing Snapshots
-
-To compare two snapshots and see the differences:
-
+To get a list of supported attributes run:
 ```sh
-./ec2diff diff snapshot1.json snapshot2.json
+./ec2diff list-attributes
 ```
 
-### Filtering by Tag
+You can see a list of available arguments by running help:
+```sh 
+./ec2diff --help
+```
+
+### Advanced Usage Example
+
+Compare multiple EC2 instances and additional attributes using a Terraform state file:
 
 ```sh
-./ec2diff diff --tag "Environment=prod" snapshot1.json snapshot2.json
+./ec2diff --attrs "instance_type,instance_state,security_groups" \
+   --state ./example/resources/terraform.tfstate \
+   --instances="i-0eb39d79613c9e43a,i-0bb19d79513a9e490,i-0ab19d89513c8e3ac"
 ```
 
 ## Example Output
 
+The following output indicates that the EC2 instance name has been changed on AWS to 'DriftEC2' and the instance type updated to 't3.micro':
+
 ```
-+ i-0123456789abcdef0   (new instance)
-- i-0fedcba9876543210   (terminated)
-~ i-0a1b2c3d4e5f6g7h8   (modified: instance type t2.micro -> t3.micro)
+Instance: i-0eb39d79613c9e43a
+Attribute      Expected                                 AWS
+---------      --------                                 ---
+instance_type  t2.micro                                 t3.micro
+tags           {"Env":"dev","Name":"example-instance"}  {"Env":"Dev","Name":"DriftEC2"}
 ```
 
-## Limitations
+---
 
-- Only supports EC2 instances (no support for other AWS resources).
-- Requires AWS credentials with sufficient permissions.
-- Snapshot files must be generated using the tool itself.
-- Does not support live, real-time diffing between accounts/regions (must use snapshots).
-- Limited filtering options (currently by tag and state).
+## Design Decisions & Tradeoffs
 
-## Extensions & Future Work
+### Language & Libraries
+- **Go** was chosen for its strong concurrency support, static typing, and suitability for CLI tools.
+- **Cobra** provides a robust CLI framework, making argument parsing and help generation straightforward.
+- **AWS SDK for Go v2** is used for modern, efficient AWS API access.
+- **HCL (HashiCorp Configuration Language)**: For parsing infrastructure definitions.
+- **go-cmp** is used for deep comparison of attributes, offering more flexibility and safety than `reflect.DeepEqual`.
 
-- Support for other AWS resources (e.g., EBS volumes, security groups).
-- Real-time diffing between two AWS accounts/regions without snapshots.
-- Output in additional formats (YAML, CSV, HTML).
-- Integration with CI/CD pipelines for automated drift detection.
-- More advanced filtering and query capabilities.
-- Web UI for visualizing differences.
+### State Comparison Approach
+- The tool compares the desired state (from Terraform state or HCL) with the actual AWS state.
+- Attribute comparison is attribute-driven, allowing users to specify which fields to check, improving flexibility and performance.
+- The common state interface ([`pkg.Instance`](https://github.com/tpriime/ec2diff/blob/main/pkg/types.go)) also allows for easy extensibility of new supported attribute fields and file formats.
 
-## Contributing
+### Concurrency
+- Drift detection is performed concurrently for each instance using goroutines and a WaitGroup, improving performance for large infrastructures.
 
-Contributions are welcome! Please open issues or pull requests on GitHub.
+### Error Handling
+- Errors are handled with clear log messages and immediate exit to avoid partial or misleading results.
+- If an instance is missing in AWS, it is treated as deleted and compared as an empty object.
 
-## License
+### Tradeoffs & Limitations
+- **Concurrency**: The tool currently uses a simple, unbounded concurrency group, which can consume significant resources for very large instance lists, but is convenient for simple workloads.
+- **Nesting**: Supporting deeply nested attributes may require additional effort, as reflection-based comparison has been avoided for performance reasons.
 
-MIT License. See [LICENSE](LICENSE) for details.
+### Extensibility
+- The modular design (separate packages for AWS, Terraform, and drift detection) makes it easier to add support for new resource types or input formats in the future.
+- The direct use of an attribute list makes it easier to support more future attributes
 
-## Authors
+---
 
-- [Your Name](https://github.com/yourusername)
-
+## Future Improvements
+* Accept aws response json as input
+* Export drift reports in formats such as JSON, HTML, or CSV

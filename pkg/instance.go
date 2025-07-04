@@ -1,7 +1,5 @@
 package pkg
 
-type State map[string]any
-
 // attributes
 const (
 	InstanceType   = "instance_type"
@@ -11,10 +9,6 @@ const (
 	SecurityGroups = "security_groups"
 	PublicIP       = "public_ip"
 )
-
-func SupportedAttributes() []string {
-	return []string{InstanceType, InstanceState, KeyName, Tags, SecurityGroups, PublicIP}
-}
 
 type Instance struct {
 	ID             string
@@ -26,6 +20,8 @@ type Instance struct {
 	PublicIP       string
 }
 
+type State map[string]any
+
 func (i Instance) ToState() State {
 	return State{
 		InstanceType:   i.Type,
@@ -35,4 +31,8 @@ func (i Instance) ToState() State {
 		SecurityGroups: i.SecurityGroups,
 		PublicIP:       i.PublicIP,
 	}
+}
+
+func SupportedAttributes() []string {
+	return []string{InstanceType, InstanceState, KeyName, Tags, SecurityGroups, PublicIP}
 }
