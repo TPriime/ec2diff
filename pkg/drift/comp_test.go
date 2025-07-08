@@ -19,7 +19,7 @@ func TestCheckDrift(t *testing.T) {
 		ID:   "222",
 		Type: "t2.micro",
 	}
-	
+
 	report := CompareInstances(context.Background(), a, b, []string{"instance_type", "tags", "sg"})
 	assert.Len(t, report.Drifts, 1, "expected 1 drift (instance_type)")
 }

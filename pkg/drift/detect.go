@@ -23,7 +23,7 @@ import (
 //
 // Returns:
 //   - A slice of Report objects, each representing the drift comparison result for an instance.
-func CheckDrift(api pkg.Client, targetInstances []pkg.Instance, attributes []string) []Report {
+func CheckDrift(api pkg.LiveFetcher, targetInstances []pkg.Instance, attributes []string) []Report {
 	// drift detection concurrently
 	var wg sync.WaitGroup
 	results := make(chan Report, len(targetInstances))

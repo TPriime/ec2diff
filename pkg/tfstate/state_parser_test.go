@@ -1,4 +1,4 @@
-package terraform
+package tfstate
 
 import (
 	"os"
@@ -8,6 +8,8 @@ import (
 )
 
 func TestParseState(t *testing.T) {
+	parser := &tfStateParser{}
+
 	content := `{
 		"resources":[
 		{
@@ -31,7 +33,7 @@ func TestParseState(t *testing.T) {
 	tmp.Write([]byte(content))
 	tmp.Close()
 
-	instances, err := ParseState(tmp.Name())
+	instances, err := parser.Parse(tmp.Name(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,4 +41,12 @@ func TestParseState(t *testing.T) {
 	assert.Len(t, instances, 1)
 	assert.Contains(t, instances, "i-123")
 	assert.Equal(t, "t2.micro", instances["i-123"].Type)
+}
+
+func TestSupportedTypes(t *testing.T) {
+	sp := &tfStateParser{}
+	types := sp.SupportedTypes()
+
+	assert.Len(t, types, 1)
+	assert.Contains(t, sp.SupportedTypes(), ".tfstate")
 }

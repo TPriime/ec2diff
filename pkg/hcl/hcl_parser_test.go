@@ -1,4 +1,4 @@
-package terraform
+package hcl
 
 import (
 	"os"
@@ -33,6 +33,8 @@ func TestAwsInstanceBlockToInstance(t *testing.T) {
 }
 
 func TestParseHCL_Success(t *testing.T) {
+	parser := hclParser{}
+
 	hclContent := `
 resource "aws_instance" "example" {
   ami                  = "ami-abc123"
@@ -53,7 +55,8 @@ resource "aws_instance" "example" {
 	assert.NoError(t, err)
 
 	ids := []string{"i-123"}
-	instances, err := ParseHCL(hclPath, ids)
+	instances, err := parser.Parse(hclPath, ids)
+
 	assert.NoError(t, err)
 	assert.Len(t, instances, 1)
 	inst, ok := instances["i-123"]
@@ -67,15 +70,19 @@ resource "aws_instance" "example" {
 }
 
 func TestParseHCL_NoIDs(t *testing.T) {
+	parser := &hclParser{}
 	tmpDir := t.TempDir()
 	hclPath := filepath.Join(tmpDir, "main.hcl")
 	os.WriteFile(hclPath, []byte(""), 0644)
-	_, err := ParseHCL(hclPath, []string{})
+
+	_, err := parser.Parse(hclPath, []string{})
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no instance ids provided")
 }
 
 func TestParseHCL_TooManyIDs(t *testing.T) {
+	parser := &hclParser{}
 	hclContent := `
 resource "aws_instance" "example" {
   ami = "ami-abc123"
@@ -85,13 +92,18 @@ resource "aws_instance" "example" {
 	tmpDir := t.TempDir()
 	hclPath := filepath.Join(tmpDir, "main.hcl")
 	os.WriteFile(hclPath, []byte(hclContent), 0644)
-	_, err := ParseHCL(hclPath, []string{"i-1", "i-2"})
+
+	_, err := parser.Parse(hclPath, []string{"i-1", "i-2"})
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "given instance ids exceed found resources")
 }
 
 func TestParseHCL_InvalidFile(t *testing.T) {
-	_, err := ParseHCL("nonexistent.tf", []string{"i-1"})
+	parser := &hclParser{}
+
+	_, err := parser.Parse("nonexistent.tf", []string{"i-1"})
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse HCL file")
 }

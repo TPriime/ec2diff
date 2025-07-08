@@ -37,7 +37,7 @@ func TestReport_Print_WithDrifts(t *testing.T) {
 	}
 
 	report.Print(&buf)
-	
+
 	output := buf.String()
 	assert.Contains(t, output, "Instance: i-7890", "expected instance header")
 	assert.Contains(t, output, "instance_type", "expected instance_type drift row")

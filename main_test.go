@@ -35,7 +35,7 @@ func tempFile(t *testing.T, name string, content string) string {
 }
 
 func Test_CLI_Args_StateFile(t *testing.T) {
-	hclContent := `
+	state := `
 	{
 		"resources":[
 		{
@@ -52,12 +52,12 @@ func Test_CLI_Args_StateFile(t *testing.T) {
 		]
 	}`
 
-	hclPath := tempFile(t, "test.hcl", hclContent)
+	stateFilePath := tempFile(t, "test.tfstate", state)
 	cmd := setupCommand(options{
 		client: getMockClient(),
 	})
 
-	cmd.SetArgs([]string{"--state", hclPath, "--instances", "i-123", "--attrs", "instance_type"})
+	cmd.SetArgs([]string{"--file", stateFilePath, "--instances", "i-123", "--attrs", "instance_type"})
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -80,7 +80,7 @@ func Test_CLI_Args_HCLFile(t *testing.T) {
 		client: getMockClient(),
 	})
 
-	cmd.SetArgs([]string{"--hcl", hclPath, "--instances", "i-123", "--attrs", "instance_type"})
+	cmd.SetArgs([]string{"--file", hclPath, "--instances", "i-123", "--attrs", "instance_type"})
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

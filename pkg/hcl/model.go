@@ -1,11 +1,6 @@
-package terraform
+package hcl
 
-import (
-	"fmt"
-
-	"github.com/hashicorp/hcl/v2/hclsimple"
-	"github.com/tpriime/ec2diff/pkg"
-)
+import "github.com/tpriime/ec2diff/pkg"
 
 type config struct {
 	Resource []awsInstanceBlock `hcl:"resource,block"`
@@ -13,7 +8,7 @@ type config struct {
 
 type awsInstanceBlock struct {
 	Type string `hcl:"type,label"` // e.g., "aws_instance"
-	Name string `hcl:"name,label"` // e.g., "example"`
+	Name string `hcl:"name,label"` // e.g., "example_server"`
 
 	Ami                 string            `hcl:"ami,optional"`
 	InstanceType        string            `hcl:"instance_type"`
@@ -35,28 +30,4 @@ func (i awsInstanceBlock) toInstance(id string) pkg.Instance {
 		SecurityGroups: i.SecurityGroups,
 		PublicIP:       i.PublicIP,
 	}
-}
-
-func ParseHCL(path string, ids []string) (map[string]pkg.Instance, error) {
-	var config config
-
-	if len(ids) == 0 {
-		return nil, fmt.Errorf("no instance ids provided")
-	}
-
-	err := hclsimple.DecodeFile(path, nil, &config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse HCL file: %v", err)
-	}
-
-	if len(ids) > len(config.Resource) {
-		return nil, fmt.Errorf("given instance ids exceed found resources")
-	}
-
-	out := map[string]pkg.Instance{}
-	for i, id := range ids {
-		out[id] = config.Resource[i].toInstance(id)
-	}
-
-	return out, nil
 }

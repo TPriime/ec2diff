@@ -13,7 +13,10 @@
           "SecurityGroups": [
             { "GroupId": "sg-0123456789abcdef0", "GroupName": "default" },
             { "GroupId": "sg-0fedcba9876543210", "GroupName": "extra-sg" }
-          ]
+          ],
+          "State": {
+            "Name": "running"
+          }
         }
       ]
     }

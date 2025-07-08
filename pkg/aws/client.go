@@ -26,7 +26,7 @@ type Client struct {
 }
 
 // NewClient loads AWS config and returns a Client
-func NewClient(region string) (pkg.Client, error) {
+func NewClient(region string) (pkg.LiveFetcher, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
 	if err != nil {
 		return nil, err

@@ -4,25 +4,26 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"slices"
 
 	"github.com/spf13/cobra"
 	"github.com/tpriime/ec2diff/pkg"
 	"github.com/tpriime/ec2diff/pkg/aws"
 	"github.com/tpriime/ec2diff/pkg/drift"
-	"github.com/tpriime/ec2diff/pkg/terraform"
+	"github.com/tpriime/ec2diff/pkg/hcl"
+	"github.com/tpriime/ec2diff/pkg/tfstate"
 )
 
 type input struct {
-	stateFile   string
-	hclFile     string
+	file        string
 	region      string
 	instanceIDs []string
 	attrs       []string
 }
 
 type options struct {
-	client pkg.Client
+	client pkg.LiveFetcher
 }
 
 func main() {
@@ -52,16 +53,16 @@ func setupCommand(opts options) *cobra.Command {
 			var stateInstances map[string]pkg.Instance
 			var err error
 
-			// parse state or hcl file
-			fileType := "state"
-			if in.stateFile != "" {
-				stateInstances, err = terraform.ParseState(in.stateFile)
-			} else {
-				stateInstances, err = terraform.ParseHCL(in.hclFile, in.instanceIDs)
-				fileType = "hcl"
-			}
-			if err != nil {
-				log.Fatalf("failed to parse %s file: %v", fileType, err)
+			// dynamically parse file based on file extention
+			ext := filepath.Ext(in.file)
+			for _, p := range parsers() {
+				if slices.Contains(p.SupportedTypes(), ext) {
+					stateInstances, err = p.Parse(in.file, in.instanceIDs)
+					if err != nil {
+						log.Fatalf("failed to parse file: %v", err)
+					}
+					break
+				}
 			}
 
 			// filter instances to only supplied ids
@@ -102,16 +103,23 @@ func setupCommand(opts options) *cobra.Command {
 		},
 	})
 
-	cmd.Flags().StringVar(&in.stateFile, "state", "", "Path to Terraform state JSON (`terraform show -json`)")
-	cmd.Flags().StringVar(&in.hclFile, "hcl", "", "Path to HCL definition file (.hcl)")
+	cmd.Flags().StringVar(&in.file, "file", "", "Path to file (.hcl, .tfstate)")
 	cmd.Flags().StringVar(&in.region, "region", "us-east-1", "AWS region")
 	cmd.Flags().StringSliceVar(&in.instanceIDs, "instances", nil, "Comma-separated instance IDs (defaults to all in state)")
 	cmd.Flags().StringSliceVar(&in.attrs, "attrs", nil, "Comma-separated attributes to check")
 
-	cmd.MarkFlagsOneRequired("state", "hcl")
-	cmd.MarkFlagsMutuallyExclusive("state", "hcl")
+	if err := cmd.MarkFlagRequired("file"); err != nil {
+		log.Fatal("Must provide file path")
+	}
 
 	return cmd
+}
+
+func parsers() []pkg.Parser {
+	return []pkg.Parser{
+		tfstate.NewTfStateParser(),
+		hcl.NewHclParser(),
+	}
 }
 
 // getTargetInstances returns a slice of pkg.Instance corresponding to the provided instance IDs.

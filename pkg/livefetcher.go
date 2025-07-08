@@ -2,11 +2,11 @@ package pkg
 
 import (
 	"context"
-	"fmt"
+	"errors"
 )
 
-var ErrNotFound = fmt.Errorf("instance not found")
+var ErrNotFound = errors.New("instance not found")
 
-type Client interface {
+type LiveFetcher interface {
 	GetInstance(ctx context.Context, instanceID string) (*Instance, error)
 }

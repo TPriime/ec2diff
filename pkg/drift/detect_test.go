@@ -45,7 +45,7 @@ func TestCheckDrift_AllInstancesFound_ReturnsReports(t *testing.T) {
 	}
 
 	reports := CheckDrift(client, targets, []string{})
-	
+
 	assert.Len(t, reports, 2)
 	for _, r := range reports {
 		assert.Contains(t, []string{"i-1", "i-2"}, r.InstanceID)
@@ -60,9 +60,9 @@ func TestCheckDrift_InstanceNotFound_ReturnsDeletedReport(t *testing.T) {
 	targets := []pkg.Instance{
 		{ID: "i-missing", Type: "t2.small"},
 	}
-	
+
 	reports := CheckDrift(client, targets, []string{pkg.InstanceType})
-	
+
 	assert.Len(t, reports, 1)
 	assert.Equal(t, "t2.small", reports[0].Drifts[0].Expected)
 	assert.Equal(t, "", reports[0].Drifts[0].Actual)
@@ -75,7 +75,7 @@ func TestCheckDrift_RemoteError_Fatals(t *testing.T) {
 	targets := []pkg.Instance{
 		{ID: "i-err"},
 	}
-	
+
 	assert.Panics(t, func() {
 		CheckDrift(client, targets, []string{"Type"})
 	}, "expected fatal error")
@@ -90,7 +90,7 @@ func TestCheckDrift_HandleMissingInstance(t *testing.T) {
 	}
 
 	reports := CheckDrift(client, targets, []string{pkg.InstanceType})
-	
+
 	assert.Len(t, reports, 1)
 	assert.Equal(t, "t2.small", reports[0].Drifts[0].Expected)
 	assert.Equal(t, "", reports[0].Drifts[0].Actual)
