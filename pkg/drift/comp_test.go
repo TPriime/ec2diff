@@ -1,7 +1,6 @@
 package drift
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"testing"
@@ -10,7 +9,7 @@ import (
 	"github.com/tpriime/ec2diff/pkg"
 )
 
-func TestCheckDrift(t *testing.T) {
+func TestCompareState(t *testing.T) {
 	a := pkg.Instance{
 		ID:   "222",
 		Type: "t2.small",
@@ -19,12 +18,13 @@ func TestCheckDrift(t *testing.T) {
 		ID:   "222",
 		Type: "t2.micro",
 	}
+	attrs := []string{"instance_type", "tags", "sg"}
 
-	report := CompareInstances(context.Background(), a, b, []string{"instance_type", "tags", "sg"})
+	report := compareState(a.ID, instanceToState(a), instanceToState(b), attrs)
 	assert.Len(t, report.Drifts, 1, "expected 1 drift (instance_type)")
 }
 
-func TestCheckDrift_NoDrift(t *testing.T) {
+func TestCompareState_NoDrift(t *testing.T) {
 	a := pkg.Instance{
 		ID:   "222",
 		Type: "t2.small",
@@ -33,31 +33,32 @@ func TestCheckDrift_NoDrift(t *testing.T) {
 		ID:   "222",
 		Type: "t2.small",
 	}
+	attrs := []string{"instance_type", "tags", "sg"}
 
-	report := CompareInstances(context.Background(), a, b, []string{"instance_type", "tags", "sg"})
+	report := compareState(a.ID, instanceToState(a), instanceToState(b), attrs)
 	assert.Len(t, report.Drifts, 0, "expected 1 drift (instance_type)")
 }
 
-func TestCheckDrift_Attributes(t *testing.T) {
+func TestCompareState_Attributes(t *testing.T) {
 	a := pkg.Instance{
-		ID:    "222",
+		ID:    "i-222",
 		Type:  "t2.micro",
 		State: "stopped",
 	}
 	b := pkg.Instance{
-		ID:    "222",
+		ID:    "i-222",
 		Type:  "t2.small",
 		State: "running",
 	}
 
 	for name, attrs := range map[string][]string{
-		"subset 1": {pkg.InstanceType},
-		"subset 2": {pkg.InstanceType, pkg.InstanceState},
+		"subset 1": {pkg.AttrInstanceType},
+		"subset 2": {pkg.AttrInstanceType, pkg.AttrInstanceState},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			report := CompareInstances(t.Context(), a, b, attrs)
-			assert.Len(t, report.Drifts, len(attrs))
+			report := compareState(a.ID, instanceToState(a), instanceToState(b), attrs)
+			assert.Len(t, report.Drifts, len(attrs), fmt.Sprintf("expected %d drifts", len(attrs)))
 			for _, d := range report.Drifts {
 				if !slices.Contains(attrs, d.Name) {
 					assert.Fail(t, fmt.Sprintf("drift name outside given attributes %v", attrs))
@@ -65,14 +66,9 @@ func TestCheckDrift_Attributes(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("should check all attributes if empty list is given", func(t *testing.T) {
-		report := CompareInstances(t.Context(), a, b, []string{})
-		assert.Len(t, report.Drifts, 2, "should detect 2 differences")
-	})
 }
 
-func TestCheckDrift_AttributesAll(t *testing.T) {
+func TestCompareState_OnlySelectedAttributes(t *testing.T) {
 	t.Run("should check all attributes if empty list is given", func(t *testing.T) {
 		a := pkg.Instance{
 			ID:    "222",
@@ -85,7 +81,23 @@ func TestCheckDrift_AttributesAll(t *testing.T) {
 			State: "running",
 		}
 
-		report := CompareInstances(t.Context(), a, b, []string{})
-		assert.Len(t, report.Drifts, 2, "should detect 2 differences")
+		report := compareState(a.ID, instanceToState(a), instanceToState(b), []string{})
+		assert.Len(t, report.Drifts, 0, "should return no drifts")
 	})
+}
+
+func TestCompareMissing(t *testing.T) {
+	a := pkg.Instance{
+		ID:      "222",
+		Type:    "t2.small",
+		State:   "running",
+		KeyName: "key_name",
+	}
+
+	report := reportMissing(a.ID, instanceToState(a),
+		[]string{pkg.AttrInstanceType, pkg.AttrInstanceState, pkg.AttrKeyName})
+	assert.Len(t, report.Drifts, 3, "expected 3 drifts")
+	for _, d := range report.Drifts {
+		assert.Equal(t, "-", d.Found)
+	}
 }

@@ -1,148 +1,193 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
-	"log"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/tpriime/ec2diff/pkg"
 	"github.com/tpriime/ec2diff/pkg/aws"
 	"github.com/tpriime/ec2diff/pkg/drift"
 	"github.com/tpriime/ec2diff/pkg/hcl"
+	"github.com/tpriime/ec2diff/pkg/tableprinter"
 	"github.com/tpriime/ec2diff/pkg/tfstate"
+	"github.com/tpriime/ec2diff/registry"
 )
 
-type input struct {
-	file        string
-	region      string
-	instanceIDs []string
-	attrs       []string
-}
-
-type options struct {
-	client pkg.LiveFetcher
-}
-
 func main() {
-	rootCmd := setupCommand(options{})
-	if err := rootCmd.Execute(); err != nil {
+	if err := run(os.Args[1:], os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }
 
-func setupCommand(opts options) *cobra.Command {
-	in := input{}
-	cmd := &cobra.Command{
-		Use:   "ec2diff",
-		Short: "Detect drift between Terraform state and AWS EC2 instances",
-		Run: func(cmd *cobra.Command, _ []string) {
+// Config holds parsed inputs and injected dependencies for drift checking.
+type Config struct {
+	// CLI args
+	FilePath    string   // Path to HCL or tfstate file
+	InstanceIDs []string // EC2 instance IDs to check
+	Attributes  []string // EC2 attributes to compare
+	ShowHelp    bool     // Whether to display CLI help
+	ListAttrs   bool     // Whether to list supported attributes
 
-			// setup client, allows mocking
-			client := opts.client
-			if client == nil {
-				var err error
-				client, err = aws.NewClient(in.region)
-				if err != nil {
-					log.Fatalf("failed to init AWS client: %v", err)
-				}
-			}
-
-			var stateInstances map[string]pkg.Instance
-			var err error
-
-			// dynamically parse file based on file extention
-			ext := filepath.Ext(in.file)
-			for _, p := range parsers() {
-				if slices.Contains(p.SupportedTypes(), ext) {
-					stateInstances, err = p.Parse(in.file, in.instanceIDs)
-					if err != nil {
-						log.Fatalf("failed to parse file: %v", err)
-					}
-					break
-				}
-			}
-
-			// filter instances to only supplied ids
-			targets, err := getTargetInstances(stateInstances, in.instanceIDs)
-			if err != nil {
-				log.Fatalf("failed to filter instances: %v", err)
-			}
-
-			// main checker
-			reports := drift.CheckDrift(client, targets, in.attrs)
-
-			// print report
-			for _, r := range reports {
-				r.Print(cmd.OutOrStdout())
-			}
-		},
-	}
-
-	cmd.PreRun = func(_ *cobra.Command, _ []string) {
-		supportedAttr := pkg.SupportedAttributes()
-		for _, attr := range in.attrs {
-			if !slices.Contains(supportedAttr, attr) {
-				log.Fatalf("attribute '%s' not supported. Supported attributes are %v", attr, supportedAttr)
-				os.Exit(1)
-			}
-		}
-	}
-
-	// Add list-attributes subcommand
-	cmd.AddCommand(&cobra.Command{
-		Use:   "list-attributes",
-		Short: "List supported attributes for drift detection",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Supported attributes:")
-			for _, attr := range pkg.SupportedAttributes() {
-				fmt.Println(" -", attr)
-			}
-		},
-	})
-
-	cmd.Flags().StringVar(&in.file, "file", "", "Path to file (.hcl, .tfstate)")
-	cmd.Flags().StringVar(&in.region, "region", "us-east-1", "AWS region")
-	cmd.Flags().StringSliceVar(&in.instanceIDs, "instances", nil, "Comma-separated instance IDs (defaults to all in state)")
-	cmd.Flags().StringSliceVar(&in.attrs, "attrs", nil, "Comma-separated attributes to check")
-
-	if err := cmd.MarkFlagRequired("file"); err != nil {
-		log.Fatal("Must provide file path")
-	}
-
-	return cmd
+	// Dependencies
+	Writer        io.Writer
+	Registry      *registry.ParserRegistry
+	Fetcher       pkg.LiveFetcher
+	Checker       pkg.DriftChecker
+	ReportPrinter pkg.ReportPrinter
+	HelpFn        func()
 }
 
-func parsers() []pkg.Parser {
-	return []pkg.Parser{
+// run parses flags and injects default dependencies before executing logic.
+func run(args []string, out io.Writer) error {
+	cfg, err := parseFlags(args, out)
+	if err != nil {
+		return err
+	}
+
+	// Show help and exit
+	if cfg.ShowHelp {
+		cfg.HelpFn()
+		return nil
+	}
+
+	// List attributes and exit
+	if cfg.ListAttrs {
+		fmt.Fprintln(cfg.Writer, "Supported attributes:")
+		for _, attr := range supportedAttributes() {
+			fmt.Fprintln(cfg.Writer, " -", attr)
+		}
+		return nil
+	}
+
+	// Initialize dependencies
+	ctx := context.Background()
+	cfg.Registry = registry.NewParserRegistry([]pkg.Parser{
 		tfstate.NewTfStateParser(),
 		hcl.NewHclParser(),
+	})
+	cfg.Fetcher, err = aws.NewAwsFetcher(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to init AWS client: %w", err)
 	}
+	cfg.Checker = drift.NewDriftChecker()
+	cfg.ReportPrinter = tableprinter.NewTablePrinter(out)
+
+	return execute(ctx, cfg)
 }
 
-// getTargetInstances returns a slice of pkg.Instance corresponding to the provided instance IDs.
-// If no IDs are specified, it returns all instances from the given stateInstances map.
-// Returns an error if any of the specified IDs are not found in the stateInstances map.
-func getTargetInstances(stateInstances map[string]pkg.Instance, ids []string) ([]pkg.Instance, error) {
-	selectedInstances := []pkg.Instance{}
+// parseFlags reads command-line arguments and returns a populated Config.
+func parseFlags(args []string, out io.Writer) (*Config, error) {
+	fs := flag.NewFlagSet("ec2diff", flag.ContinueOnError)
+	fs.SetOutput(out)
 
-	// select all instances if none is specified
-	if len(ids) == 0 {
-		for _, inst := range stateInstances {
-			selectedInstances = append(selectedInstances, inst)
-		}
-		return selectedInstances, nil
+	file := fs.String("file", "", "Path to file (.hcl or .tfstate)")
+	instances := fs.String("instances", "", "Comma-separated instance IDs")
+	attrs := fs.String("attrs", "", "Comma-separated attributes to check")
+	listAttrs := fs.Bool("list-attributes", false, "List supported attributes")
+	showHelp := fs.Bool("h", false, "Show help")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
 	}
 
-	for _, id := range ids {
-		if inst, ok := stateInstances[id]; ok {
-			selectedInstances = append(selectedInstances, inst)
-		} else {
-			return nil, fmt.Errorf("instance not found in terraform state, instaneID: %s", id)
-		}
+	cfg := &Config{
+		FilePath:    *file,
+		InstanceIDs: parseCommaSep(*instances),
+		Attributes:  parseCommaSep(*attrs),
+		ListAttrs:   *listAttrs,
+		ShowHelp:    *showHelp,
+		Writer:      out,
+		HelpFn:      fs.Usage,
 	}
 
-	return selectedInstances, nil
+	return cfg, nil
+}
+
+// execute performs the main comparison logic based on the provided Config.
+func execute(ctx context.Context, cfg *Config) error {
+	if cfg.FilePath == "" {
+		cfg.HelpFn()
+		return errors.New("missing required -file argument")
+	}
+
+	if err := validateAttributes(cfg.Attributes); err != nil {
+		return err
+	}
+
+	parser, ok := cfg.Registry.Get(cfg.FilePath)
+	if !ok {
+		return fmt.Errorf("no parser found for file extension %s", filepath.Ext(cfg.FilePath))
+	}
+
+	// Parse local state
+	state, err := parser.Parse(cfg.FilePath, cfg.InstanceIDs)
+	if err != nil {
+		return fmt.Errorf("failed to parse file: %w", err)
+	}
+
+	// Fetch live ec2 resources
+	live, err := cfg.Fetcher.Fetch(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch live EC2 instances: %w", err)
+	}
+
+	// Use all supported attributes if none are specified.
+	if len(cfg.Attributes) == 0 {
+		cfg.Attributes = supportedAttributes()
+	}
+
+	// Check for drifts and report
+	reports := cfg.Checker.CheckDrift(ctx, live, state, cfg.Attributes)
+	cfg.ReportPrinter.Print(reports)
+
+	return nil
+}
+
+// parseCommaSep splits a comma-separated string into a clean string slice.
+func parseCommaSep(input string) []string {
+	if input == "" {
+		return nil
+	}
+	parts := strings.Split(input, ",")
+	var clean []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			clean = append(clean, p)
+		}
+	}
+	return clean
+}
+
+// validateAttributes ensures each input attribute is supported.
+func validateAttributes(attrs []string) error {
+	if len(attrs) == 0 {
+		return nil
+	}
+	supported := supportedAttributes()
+	for _, attr := range attrs {
+		if !slices.Contains(supported, attr) {
+			return fmt.Errorf("attribute '%s' not supported. Supported attributes: %v", attr, supported)
+		}
+	}
+	return nil
+}
+
+func supportedAttributes() []string {
+	return []string{
+		pkg.AttrInstanceType,
+		pkg.AttrInstanceState,
+		pkg.AttrKeyName,
+		pkg.AttrTags,
+		pkg.AttrSecurityGroups,
+		pkg.AttrPublicIP,
+	}
 }

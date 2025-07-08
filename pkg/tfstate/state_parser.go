@@ -36,7 +36,7 @@ func (t tfStateParser) Parse(filePath string, instanceIDs []string) (map[string]
 			continue
 		}
 		for _, inst := range res.Instances {
-			if len(instanceIDs) != 0 && slices.Contains(instanceIDs, inst.Attributes.ID) {
+			if len(instanceIDs) == 0 || slices.Contains(instanceIDs, inst.Attributes.ID) {
 				out[inst.Attributes.ID] = inst.toInstance()
 			}
 		}
@@ -50,5 +50,5 @@ func (t tfStateParser) Parse(filePath string, instanceIDs []string) (map[string]
 
 // SupportedTypes returns the file extensions this parser handles.
 func (tfStateParser) SupportedTypes() []string {
-	return []string{".tfstate"}
+	return []string{".tfstate", ".json"}
 }

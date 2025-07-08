@@ -3,162 +3,155 @@ package main
 import (
 	"bytes"
 	"context"
-	"os"
-	"path/filepath"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tpriime/ec2diff/pkg"
+	"github.com/tpriime/ec2diff/pkg/mocks"
+	"github.com/tpriime/ec2diff/registry"
 )
 
-var mockInstance = pkg.Instance{
-	ID:   "i-123",
-	Type: "t2.samll",
-}
+func TestRun_Args(t *testing.T) {
+	t.Run("should show usage", func(t *testing.T) {
+		var out bytes.Buffer
+		err := run([]string{"-h"}, &out)
 
-type mockClient struct{ result pkg.Instance }
-
-func (m mockClient) GetInstance(ctx context.Context, instanceID string) (*pkg.Instance, error) {
-	return &m.result, nil
-}
-
-func getMockClient() mockClient {
-	return mockClient{result: mockInstance}
-}
-
-func tempFile(t *testing.T, name string, content string) string {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, name)
-	err := os.WriteFile(path, []byte(content), 0644)
-	assert.NoError(t, err)
-	return path
-}
-
-func Test_CLI_Args_StateFile(t *testing.T) {
-	state := `
-	{
-		"resources":[
-		{
-			"type":"aws_instance",
-			"instances":[
-				{
-					"attributes":{
-					"id":"i-123",
-					"instance_type":"t2.micro"
-					}
-				}
-			]
-		}
-		]
-	}`
-
-	stateFilePath := tempFile(t, "test.tfstate", state)
-	cmd := setupCommand(options{
-		client: getMockClient(),
+		assert.NoError(t, err)
+		assert.Contains(t, out.String(), "Usage")
 	})
 
-	cmd.SetArgs([]string{"--file", stateFilePath, "--instances", "i-123", "--attrs", "instance_type"})
+	t.Run("should list attributes", func(t *testing.T) {
+		var out bytes.Buffer
+		err := run([]string{"-list-attributes"}, &out)
 
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	err := cmd.Execute()
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "instance_type")
-}
-
-func Test_CLI_Args_HCLFile(t *testing.T) {
-	hclContent := `
-		resource "aws_instance" "example" {
-			ami                  = "ami-abc123"
-			instance_type        = "t2.micro"
-		}
-	`
-
-	hclPath := tempFile(t, "test.hcl", hclContent)
-	cmd := setupCommand(options{
-		client: getMockClient(),
+		assert.NoError(t, err)
+		assert.Contains(t, out.String(), "Supported attributes")
+		assert.Contains(t, out.String(), "instance_type")
 	})
 
-	cmd.SetArgs([]string{"--file", hclPath, "--instances", "i-123", "--attrs", "instance_type"})
+	t.Run("should invalidate attributes", func(t *testing.T) {
+		var out bytes.Buffer
+		err := run([]string{
+			"-file", "test.tfstate",
+			"-attrs", "unsupported_attr",
+		}, &out)
 
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	err := cmd.Execute()
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "instance_type")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not supported")
+	})
+
+	t.Run("should reject missing file and print usage", func(t *testing.T) {
+		var out bytes.Buffer
+		err := run([]string{"-instances", "i-123"}, &out)
+
+		assert.Error(t, err)
+		assert.Contains(t, out.String(), "Usage")
+	})
 }
 
-func Test_CLI_Args_MissingRequired(t *testing.T) {
-	cmd := setupCommand(options{
-		client: getMockClient(),
-	})
-	cmd.SetArgs([]string{"--instances", "i-1"})
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	err := cmd.Execute()
+func TestExecute_SuccessfulWithNoDrifts(t *testing.T) {
+	state := pkg.InstanceMap{"i-abc": pkg.Instance{ID: "i-abc", State: "running"}}
+	live := pkg.InstanceMap{"i-abc": pkg.Instance{ID: "i-abc", State: "running"}}
 
+	parser := &mocks.MockParser{Parsed: state, Extensions: []string{".tfstate"}}
+	fetcher := &mocks.MockLiveFetcher{Instances: live}
+	printer := &mocks.MockReportPrinter{}
+	out := &bytes.Buffer{}
+
+	cfg := &Config{
+		FilePath:      "data.tfstate",
+		InstanceIDs:   []string{"i-abc"},
+		Attributes:    []string{pkg.AttrInstanceState},
+		Writer:        out,
+		Registry:      registry.NewParserRegistry([]pkg.Parser{parser}),
+		Fetcher:       fetcher,
+		Checker:       &mocks.MockDriftChecker{},
+		ReportPrinter: printer,
+		HelpFn:        func() {},
+	}
+
+	err := execute(context.Background(), cfg)
+
+	assert.NoError(t, err)
+	assert.Len(t, printer.Output, 1)
+	assert.Equal(t, "i-abc", printer.Output[0].InstanceID)
+	assert.Empty(t, printer.Output[0].Drifts)
+}
+
+func TestExecute_MissingFile(t *testing.T) {
+	called := false
+	cfg := &Config{
+		FilePath: "",
+		Writer:   &bytes.Buffer{},
+		HelpFn:   func() { called = true },
+	}
+	err := execute(context.Background(), cfg)
 	assert.Error(t, err)
-	assert.Contains(t, buf.String(), "required")
-}
-func Test_getTargetInstances_AllInstances(t *testing.T) {
-	state := map[string]pkg.Instance{
-		"i-1": {ID: "i-1", Type: "t2.micro"},
-		"i-2": {ID: "i-2", Type: "t2.small"},
-	}
-	instances, err := getTargetInstances(state, nil)
-
-	assert.NoError(t, err)
-	assert.Len(t, instances, 2)
-	ids := []string{instances[0].ID, instances[1].ID}
-	assert.Contains(t, ids, "i-1")
-	assert.Contains(t, ids, "i-2")
+	assert.True(t, called)
 }
 
-func Test_getTargetInstances_SpecificInstances(t *testing.T) {
-	state := map[string]pkg.Instance{
-		"i-1": {ID: "i-1", Type: "t2.micro"},
-		"i-2": {ID: "i-2", Type: "t2.small"},
+func TestExecute_UnsupportedExtension(t *testing.T) {
+	reg := registry.NewParserRegistry([]pkg.Parser{})
+	cfg := &Config{
+		FilePath: "unsupported.txt",
+		Writer:   &bytes.Buffer{},
+		Registry: reg,
 	}
-	instances, err := getTargetInstances(state, []string{"i-2"})
-
-	assert.NoError(t, err)
-	assert.Len(t, instances, 1)
-	assert.Equal(t, "i-2", instances[0].ID)
-}
-
-func Test_getTargetInstances_InstanceNotFound(t *testing.T) {
-	state := map[string]pkg.Instance{
-		"i-1": {ID: "i-1", Type: "t2.micro"},
-	}
-	instances, err := getTargetInstances(state, []string{"i-not-found"})
-
-	assert.Nil(t, instances)
+	err := execute(context.Background(), cfg)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "instance not found")
+	assert.Contains(t, err.Error(), "no parser found")
 }
 
-func Test_getTargetInstances_EmptyState(t *testing.T) {
-	state := map[string]pkg.Instance{}
-	instances, err := getTargetInstances(state, nil)
-
-	assert.NoError(t, err)
-	assert.Len(t, instances, 0)
-}
-
-func Test_getTargetInstances_MultipleIDs(t *testing.T) {
-	state := map[string]pkg.Instance{
-		"i-1": {ID: "i-1", Type: "t2.micro"},
-		"i-2": {ID: "i-2", Type: "t2.small"},
-		"i-3": {ID: "i-3", Type: "t2.nano"},
+func TestExecute_ParseFails(t *testing.T) {
+	parser := &mocks.MockParser{Err: errors.New("broken"), Extensions: []string{".tfstate"}}
+	reg := registry.NewParserRegistry([]pkg.Parser{parser})
+	cfg := &Config{
+		FilePath: "file.tfstate",
+		Writer:   &bytes.Buffer{},
+		Registry: reg,
 	}
-	instances, err := getTargetInstances(state, []string{"i-1", "i-3"})
+	err := execute(context.Background(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse")
+}
 
+func TestExecute_FetchFails(t *testing.T) {
+	parser := &mocks.MockParser{Parsed: pkg.InstanceMap{}, Extensions: []string{".tfstate"}}
+	fetcher := &mocks.MockLiveFetcher{Err: errors.New("timeout")}
+	reg := registry.NewParserRegistry([]pkg.Parser{parser})
+
+	cfg := &Config{
+		FilePath: "file.tfstate",
+		Writer:   &bytes.Buffer{},
+		Registry: reg,
+		Fetcher:  fetcher,
+		HelpFn:   func() {},
+	}
+
+	err := execute(context.Background(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch")
+}
+
+func TestParseCSV(t *testing.T) {
+	input := "id1,id2 , id3"
+	expected := []string{"id1", "id2", "id3"}
+	actual := parseCommaSep(input)
+	assert.Equal(t, expected, actual)
+}
+
+func TestValidateAttributes(t *testing.T) {
+	err := validateAttributes([]string{"instance_type", "instance_state", "tags", "security_groups"})
 	assert.NoError(t, err)
-	assert.Len(t, instances, 2)
-	ids := []string{instances[0].ID, instances[1].ID}
-	assert.Contains(t, ids, "i-1")
-	assert.Contains(t, ids, "i-3")
+
+	err = validateAttributes([]string{"FakeAttr"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported")
+}
+
+func TestSupportedAttributes(t *testing.T) {
+	attrs := supportedAttributes()
+
+	assert.Contains(t, attrs, pkg.AttrInstanceType, "supportedAttributes should contain 'instance_type'")
 }

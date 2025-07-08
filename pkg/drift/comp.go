@@ -1,59 +1,79 @@
 package drift
 
 import (
-	"context"
 	"slices"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/tpriime/ec2diff/pkg"
 )
 
-// AttributeDrift describes an attribute mismatch
-type AttributeDrift struct {
-	Name     string `json:"name"`
-	Expected any    `json:"expected"`
-	Actual   any    `json:"actual"`
-}
+type state map[string]any
 
-// CompareInstances compares two Instances and returns a report
-func CompareInstances(ctx context.Context,
-	instanceA pkg.Instance,
-	instanceB pkg.Instance,
-	attrs []string,
-) Report {
-	if len(attrs) == 0 {
-		attrs = pkg.SupportedAttributes()
-	}
+// compareState checks two instance states and identifies attribute-level drift.
+// It returns a report listing any changed, missing, or unexpected attributes.
+func compareState(id string, stateA, stateB state, attrs []string) pkg.Report {
+	drifts := []pkg.AttributeDrift{}
 
-	drifts := compare(instanceA.ToState(), instanceB.ToState(), attrs)
-
-	return Report{
-		InstanceID: instanceA.ID,
-		Drifts:     drifts,
-	}
-}
-
-// Compare maps and return mismatched keys
-func compare(a, b pkg.State, attrs []string) []AttributeDrift {
-	drifts := []AttributeDrift{}
-	for attr, valueA := range a {
-		if !slices.Contains(attrs, attr) { // ignore non-specified attributes
+	// Compare attributes present in stateA
+	for attr, valueA := range stateA {
+		// filter to include only selected attributes
+		if !slices.Contains(attrs, attr) {
 			continue
 		}
-		valueB, ok := b[attr]
+		valueB, ok := stateB[attr]
 		if !ok || !cmp.Equal(valueA, valueB) {
-			drifts = append(drifts, AttributeDrift{Name: attr, Expected: a[attr], Actual: b[attr]})
+			drifts = append(drifts, pkg.AttributeDrift{Name: attr, Expected: valueA, Found: valueB})
 		}
 	}
 
-	// check for new attributes in b, missing in a
-	for attr := range b {
-		if !slices.Contains(attrs, attr) { // ignore non-specified attributes
+	// Find extra attributes present in stateB but missing in stateA
+	for attr := range stateB {
+		// filter to include only selected attributes
+		if !slices.Contains(attrs, attr) {
 			continue
 		}
-		if _, ok := a[attr]; !ok {
-			drifts = append(drifts, AttributeDrift{Name: attr, Expected: "<empty>", Actual: b[attr]})
+		if _, ok := stateA[attr]; !ok {
+			drifts = append(drifts, pkg.AttributeDrift{Name: attr, Expected: "<empty>", Found: stateB[attr]})
 		}
 	}
-	return drifts
+
+	comment := pkg.CommentDriftDetected
+	if len(drifts) == 0 {
+		comment = pkg.CommentNoDriftDetected
+	}
+
+	return pkg.Report{
+		InstanceID: id,
+		Drifts:     drifts,
+		Comment:    comment,
+	}
+}
+
+// reportMissing generates a drift report for an instance missing from stateB.
+// It assumes the instance is present only in stateA and marks all attributes as missing.
+func reportMissing(id string, stateA state, attrs []string) pkg.Report {
+	drifts := []pkg.AttributeDrift{}
+	for attr, value := range stateA {
+		// filter to include only selected attributes
+		if !slices.Contains(attrs, attr) {
+			continue
+		}
+		drifts = append(drifts, pkg.AttributeDrift{Name: attr, Expected: value, Found: "-"})
+	}
+	return pkg.Report{
+		InstanceID: id,
+		Drifts:     drifts,
+		Comment:    pkg.CommentMissingState,
+	}
+}
+
+func instanceToState(i pkg.Instance) state {
+	return state{
+		pkg.AttrInstanceType:   i.Type,
+		pkg.AttrInstanceState:  i.State,
+		pkg.AttrKeyName:        i.KeyName,
+		pkg.AttrTags:           i.Tags,
+		pkg.AttrSecurityGroups: i.SecurityGroups,
+		pkg.AttrPublicIP:       i.PublicIP,
+	}
 }

@@ -48,7 +48,7 @@ export AWS_PROFILE=your-profile
 
 ### Basic Usage
 ```sh
-./ec2diff --attrs "instance_type,tags" --hcl ./example/resources/instance.hcl --instances="i-0eb39d79613c9e43a"
+./ec2diff --file ./examples/resources/terraform.tfstate 
 ```
 
 Or, using Docker:
@@ -56,19 +56,17 @@ Or, using Docker:
 ```sh
 docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
    -v $(pwd):/data ec2diff \
-   --attrs "instance_type,tags" \
-   --hcl /data/example/resources/instance.hcl \
-   --instances="i-0eb39d79613c9e43a"
+   --file /data/examples/resources/terraform.tfstate 
 ```
 
 To get a list of supported attributes run:
 ```sh
-./ec2diff list-attributes
+./ec2diff --list-attributes
 ```
 
 You can see a list of available arguments by running help:
 ```sh 
-./ec2diff --help
+./ec2diff -h
 ```
 
 ### Advanced Usage Example
@@ -76,26 +74,86 @@ You can see a list of available arguments by running help:
 Compare multiple EC2 instances and additional attributes using a Terraform state file:
 
 ```sh
-./ec2diff --attrs "instance_type,instance_state,security_groups" \
-   --state ./example/resources/terraform.tfstate \
+./ec2diff --file ./examples/resources/instance.hcl \
+   --attrs="instance_type,instance_state,security_groups" \
    --instances="i-0eb39d79613c9e43a,i-0bb19d79513a9e490,i-0ab19d89513c8e3ac"
 ```
 
 ## Example Output
 
-The following output indicates that the EC2 instance name has been changed on AWS to 'DriftEC2' and the instance type updated to 't3.micro':
+The following output indicate that 3 instances exist live, in this case, AWS: 1 instance
+is missing in the state file, 1 has drifted, and 1 has no drifts:
 
 ```
-Instance: i-0eb39d79613c9e43a
-Attribute      Expected                                 AWS
----------      --------                                 ---
-instance_type  t2.micro                                 t3.micro
-tags           {"Env":"dev","Name":"example-instance"}  {"Env":"Dev","Name":"DriftEC2"}
+==============================
+            REPORT
+==============================
+
+Instance [1]      : i-09f95c75f6cea3357
+Comment           : Missing state
+
+Attribute         Live                                  State
+-------------     ----------------------------------    ------------------------------
+instance_type     t4g.micro                             -                             
+instance_state    running                               -                             
+key_name          test                                  -                             
+tags              {"Name":"driftcheck-missing"}         -                             
+security_groups   ["default","launch-wizard-1"]         -                             
+public_ip         54.237.208.142                        -                             
+
+—
+
+Instance [2]      : i-0eb39d79613c9e43a
+Comment           : Drifts detected
+
+Attribute         Live                                   State
+-------------     ----------------------------------     ------------------------------
+instance_state    stopped                                running                       
+tags              {"Env":"Dev","Name":"DriftEC2"}        {"Name":"DriftEC2"}           
+public_ip                                                3.80.95.115                   
+
+—
+
+Instance [3]      : i-0022023
+Comment           : No drifts detected
 ```
 
 ---
 
 ## Design Decisions & Tradeoffs
+
+### Structure
+```sh
+├── examples
+│   ├── resources/
+│   └── terraform/
+├── pkg
+│   ├── aws/
+│   ├── drift/
+│   ├── hcl/
+│   ├── mocks/
+│   ├── tableprinter/
+│   ├── tfstate/
+│   ├── driftchecker.go
+│   ├── instance.go
+│   ├── livefetcher.go
+│   ├── parser.go
+│   └── reportprinter.go
+├── registry
+│   └── parser_registry.go
+└── main.go
+```
+
+- [**examples**](./examples) contain sample [**resources**](./examples/resources) that could be used as input to the program. It also contains a sample [**terraform**](./examples/terraform) code that could be run to setup an EC2 instance on AWS.
+- [**pkg**](./pkg) is where most interface definitions for the application are defined and implemented. Notably:
+   - [`LiveFetcher`](./pkg/livefetcher.go) interface for fetching instances from a live source (e.g. AWS).
+   - [`Parser`](./pkg/parser.go) interface for parsing state files passed to the program to extract instance definitions.
+   - [`DriftChecker`](./pkg/driftchecker.go) interface abstracts logic for comparing instances to detect differences/drifts.
+   - [`ReportPrinter`](./pkg/reportprinter.go) interface abstracts logic for presenting/printing reports of drifts.
+- [**registry**](./registry) registers available parsers.
+- [main.go](./main.go) the program's entry point.
+
+
 
 ### Language & Libraries
 - **Go** was chosen for its strong concurrency support, static typing, and suitability for CLI tools.
@@ -107,7 +165,7 @@ tags           {"Env":"dev","Name":"example-instance"}  {"Env":"Dev","Name":"Dri
 ### State Comparison Approach
 - The tool compares the desired state (from Terraform state or HCL) with the actual AWS state.
 - Attribute comparison is attribute-driven, allowing users to specify which fields to check, improving flexibility and performance.
-- The common state interface ([`pkg.Instance`](https://github.com/tpriime/ec2diff/blob/main/pkg/types.go)) also allows for easy extensibility of new supported attribute fields and file formats.
+- The common state interface ([`pkg.Instance`](./pkg/instance.go)) also allows for easy extensibility of new supported attribute fields and file formats.
 
 ### Concurrency
 - Drift detection is performed concurrently for each instance using goroutines and a WaitGroup, improving performance for large infrastructures.

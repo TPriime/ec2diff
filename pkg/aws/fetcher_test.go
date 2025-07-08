@@ -24,8 +24,8 @@ func (m *MockEC2API) DescribeInstances(ctx context.Context, _ *ec2.DescribeInsta
 	return &output, nil
 }
 
-func NewMockClient(responseJson string) *Client {
-	return &Client{EC2: &MockEC2API{mockReponseJson: responseJson}}
+func NewMockClient(responseJson string) *awsFetcher {
+	return &awsFetcher{client: &MockEC2API{mockReponseJson: responseJson}}
 }
 
 func TestGetInstance_Success(t *testing.T) {
@@ -51,15 +51,16 @@ func TestGetInstance_Success(t *testing.T) {
     }
   ]
 }`)
-	result, err := client.GetInstance(context.Background(), "i-0123456789abcdef0")
+	result, err := client.Fetch(t.Context())
 
 	assert.NoError(t, err)
-	assert.Equal(t, "i-0123456789abcdef0", result.ID)
-	assert.Equal(t, "t2.small", result.Type)
-	assert.Equal(t, "test-key", result.KeyName)
-	assert.Equal(t, "test-instance", result.Tags["Name"])
-	assert.Contains(t, result.SecurityGroups, "default")
-	assert.Contains(t, result.SecurityGroups, "extra-sg")
+	assert.Contains(t, result, "i-0123456789abcdef0")
+	inst := result["i-0123456789abcdef0"]
+	assert.Equal(t, "t2.small", inst.Type)
+	assert.Equal(t, "test-key", inst.KeyName)
+	assert.Equal(t, "test-instance", inst.Tags["Name"])
+	assert.Contains(t, inst.SecurityGroups, "default")
+	assert.Contains(t, inst.SecurityGroups, "extra-sg")
 }
 
 func TestGetInstance_EmptyResponse(t *testing.T) {
@@ -73,29 +74,8 @@ func TestGetInstance_EmptyResponse(t *testing.T) {
 }`,
 	)
 
-	_, err := client.GetInstance(context.Background(), "i-missing")
+	result, err := client.Fetch(t.Context())
 
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotFound)
-}
-
-func TestGetInstance_NotFound(t *testing.T) {
-	client := NewMockClient(`
-{
-  "Reservations": [
-    {
-      "Instances": [
-        {
-          "InstanceId": "i-0123456789abcdef0"
-        }
-      ]
-    }
-  ]
-}`,
-	)
-
-	_, err := client.GetInstance(context.Background(), "i-no-match")
-
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotFound)
+	assert.NoError(t, err)
+	assert.Len(t, result, 0)
 }
