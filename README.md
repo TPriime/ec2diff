@@ -46,7 +46,18 @@ or by setting the equivalent profile:
 export AWS_PROFILE=your-profile
 ```
 
+#### Using Localstack
+
+To use localstack, set the following env variables:
+```bash
+export AWS_ENDPOINT_URL=http://localhost:4566
+export AWS_REGION=us-east-1
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+```
+
 ### Basic Usage
+Compare live instances against terraform state file
 ```sh
 ./ec2diff --file ./examples/resources/terraform.tfstate 
 ```
@@ -57,6 +68,11 @@ Or, using Docker:
 docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
    -v $(pwd):/data ec2diff \
    --file /data/examples/resources/terraform.tfstate 
+```
+
+Check on specific attributes:
+```sh
+./ec2diff --file ./examples/resources/terraform.tfstate --attrs="instance_type,tags"
 ```
 
 To get a list of supported attributes run:
@@ -71,12 +87,12 @@ You can see a list of available arguments by running help:
 
 ### Advanced Usage Example
 
-Compare multiple EC2 instances and additional attributes using a Terraform state file:
+Compare multiple EC2 instances on specific attributes against HCL file:
 
 ```sh
 ./ec2diff --file ./examples/resources/instance.hcl \
    --attrs="instance_type,instance_state,security_groups" \
-   --instances="i-0eb39d79613c9e43a,i-0bb19d79513a9e490,i-0ab19d89513c8e3ac"
+   --idset="i-0eb39d79613c9e43a,i-0bb19d79513a9e490,i-0ab19d89513c8e3ac"
 ```
 
 ## Example Output
@@ -112,7 +128,7 @@ instance_state    stopped                                running
 tags              {"Env":"Dev","Name":"DriftEC2"}        {"Name":"DriftEC2"}           
 public_ip                                                3.80.95.115                   
 
-—
+——
 
 Instance [3]      : i-0022023
 Comment           : No drifts detected
@@ -157,7 +173,7 @@ Comment           : No drifts detected
 
 ### Language & Libraries
 - **Go** was chosen for its strong concurrency support, static typing, and suitability for CLI tools.
-- **Cobra** provides a robust CLI framework, making argument parsing and help generation straightforward.
+- **Flags** provides a lightweight CLI support, making argument parsing and help generation straightforward.
 - **AWS SDK for Go v2** is used for modern, efficient AWS API access.
 - **HCL (HashiCorp Configuration Language)**: For parsing infrastructure definitions.
 - **go-cmp** is used for deep comparison of attributes, offering more flexibility and safety than `reflect.DeepEqual`.

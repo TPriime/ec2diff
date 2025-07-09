@@ -1,7 +1,6 @@
 package drift
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +24,7 @@ func TestCheckDrift_NoDrift(t *testing.T) {
 	live := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "my-key")}
 	state := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "my-key")}
 
-	reports := NewDriftChecker().CheckDrift(context.TODO(), live, state, []string{"Type", "State", "KeyName"})
+	reports := NewDriftChecker().CheckDrift(t.Context(), live, state, []string{"Type", "State", "KeyName"})
 
 	assert.Len(t, reports, 1)
 	assert.Empty(t, reports[0].Drifts)
@@ -35,7 +34,7 @@ func TestCheckDrift_AttributeDrift(t *testing.T) {
 	live := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "stopped", "my-key")}
 	state := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "my-key")}
 
-	reports := NewDriftChecker().CheckDrift(context.TODO(), live, state, []string{pkg.AttrInstanceState})
+	reports := NewDriftChecker().CheckDrift(t.Context(), live, state, []string{pkg.AttrInstanceState})
 
 	assert.Len(t, reports, 1)
 	assert.Len(t, reports[0].Drifts, 1)
@@ -69,7 +68,7 @@ func TestCheckDrift_CustomAttributes(t *testing.T) {
 	live := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "key1")}
 	state := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "key2")}
 
-	reports := NewDriftChecker().CheckDrift(context.TODO(), live, state, []string{"State"})
+	reports := NewDriftChecker().CheckDrift(t.Context(), live, state, []string{"State"})
 
 	assert.Empty(t, reports[0].Drifts)
 }

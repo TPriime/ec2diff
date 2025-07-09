@@ -29,8 +29,8 @@ func (t tablePrinter) Print(reports []pkg.Report) {
 
 	for i, r := range reports {
 		// Print instance ID and optional comment
-		fmt.Fprintf(w, "Instance [%d]\t: %s\n", i+1, r.InstanceID)
-		fmt.Fprintf(w, "Comment      \t: %s\n", r.Comment)
+		fmt.Fprintf(w, "Instance [%d]   \t: %s\n", i+1, r.InstanceID)
+		fmt.Fprintf(w, "Comment         \t: %s\n", r.Comment)
 
 		// Print header and drift entries
 		if len(r.Drifts) != 0 {
@@ -55,7 +55,7 @@ func (t tablePrinter) Print(reports []pkg.Report) {
 
 		// Separate instance reports with spacing and em dash line
 		if i < len(reports)-1 {
-			fmt.Fprintf(w, "\n—\n\n")
+			fmt.Fprintf(w, "\n——\n\n")
 		}
 	}
 	w.Flush()

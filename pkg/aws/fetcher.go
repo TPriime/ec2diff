@@ -3,7 +3,6 @@ package aws
 import (
 	"context"
 	"fmt"
-
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -29,8 +28,9 @@ type ec2API interface {
 func NewAwsFetcher(ctx context.Context) (pkg.LiveFetcher, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to load AWS config: %w", err)
 	}
+
 	return &awsFetcher{client: ec2.NewFromConfig(cfg)}, nil
 }
 
@@ -47,9 +47,6 @@ func (f *awsFetcher) Fetch(ctx context.Context) (pkg.InstanceMap, error) {
 
 		for _, reservation := range page.Reservations {
 			for _, instance := range reservation.Instances {
-				// TODO: log
-				//fmt.Printf("Instance ID: %s", *instance.InstanceId)
-
 				// Convert AWS instance to local model and store
 				instances[*instance.InstanceId] = toModel(instance)
 			}

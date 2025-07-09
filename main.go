@@ -15,14 +15,18 @@ import (
 	"github.com/tpriime/ec2diff/pkg/aws"
 	"github.com/tpriime/ec2diff/pkg/drift"
 	"github.com/tpriime/ec2diff/pkg/hcl"
+	"github.com/tpriime/ec2diff/pkg/logger"
 	"github.com/tpriime/ec2diff/pkg/tableprinter"
 	"github.com/tpriime/ec2diff/pkg/tfstate"
 	"github.com/tpriime/ec2diff/registry"
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+	logger.Init(logger.LevelInfo)
+	ctx := logger.With(context.Background())
+
+	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
+		logger.Error(ctx, "Program terminated with error", "error", err)
 		os.Exit(1)
 	}
 }
@@ -30,14 +34,13 @@ func main() {
 // Config holds parsed inputs and injected dependencies for drift checking.
 type Config struct {
 	// CLI args
-	FilePath    string   // Path to HCL or tfstate file
-	InstanceIDs []string // EC2 instance IDs to check
-	Attributes  []string // EC2 attributes to compare
-	ShowHelp    bool     // Whether to display CLI help
-	ListAttrs   bool     // Whether to list supported attributes
+	FilePath       string   // Path to HCL or tfstate file
+	HCLInstanceIDs []string // EC2 instance IDs to map HCL resources to
+	Attributes     []string // EC2 attributes to compare
+	ShowHelp       bool     // Whether to display CLI help
+	ListAttrs      bool     // Whether to list supported attributes
 
 	// Dependencies
-	Writer        io.Writer
 	Registry      *registry.ParserRegistry
 	Fetcher       pkg.LiveFetcher
 	Checker       pkg.DriftChecker
@@ -46,7 +49,7 @@ type Config struct {
 }
 
 // run parses flags and injects default dependencies before executing logic.
-func run(args []string, out io.Writer) error {
+func run(ctx context.Context, args []string, out io.Writer) error {
 	cfg, err := parseFlags(args, out)
 	if err != nil {
 		return err
@@ -60,15 +63,15 @@ func run(args []string, out io.Writer) error {
 
 	// List attributes and exit
 	if cfg.ListAttrs {
-		fmt.Fprintln(cfg.Writer, "Supported attributes:")
+		fmt.Fprintln(out, "Supported attributes:")
 		for _, attr := range supportedAttributes() {
-			fmt.Fprintln(cfg.Writer, " -", attr)
+			fmt.Fprintln(out, " -", attr)
 		}
 		return nil
 	}
 
 	// Initialize dependencies
-	ctx := context.Background()
+	logger.Debug(ctx, "initalzing dependencies")
 	cfg.Registry = registry.NewParserRegistry([]pkg.Parser{
 		tfstate.NewTfStateParser(),
 		hcl.NewHclParser(),
@@ -88,24 +91,23 @@ func parseFlags(args []string, out io.Writer) (*Config, error) {
 	fs := flag.NewFlagSet("ec2diff", flag.ContinueOnError)
 	fs.SetOutput(out)
 
-	file := fs.String("file", "", "Path to file (.hcl or .tfstate)")
-	instances := fs.String("instances", "", "Comma-separated instance IDs")
-	attrs := fs.String("attrs", "", "Comma-separated attributes to check")
-	listAttrs := fs.Bool("list-attributes", false, "List supported attributes")
-	showHelp := fs.Bool("h", false, "Show help")
+	file := fs.String("file", "", "Path to file (.hcl or .tfstate).")
+	hclIDs := fs.String("idset", "", "Comma-separated instanceIDs for HCL resources, ignored for other file types.")
+	attrs := fs.String("attrs", "", "Comma-separated attributes to check.")
+	listAttrs := fs.Bool("list-attributes", false, "List supported attributes.")
+	showHelp := fs.Bool("h", false, "Show help.")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 
 	cfg := &Config{
-		FilePath:    *file,
-		InstanceIDs: parseCommaSep(*instances),
-		Attributes:  parseCommaSep(*attrs),
-		ListAttrs:   *listAttrs,
-		ShowHelp:    *showHelp,
-		Writer:      out,
-		HelpFn:      fs.Usage,
+		FilePath:       *file,
+		HCLInstanceIDs: parseCommaSep(*hclIDs),
+		Attributes:     parseCommaSep(*attrs),
+		ListAttrs:      *listAttrs,
+		ShowHelp:       *showHelp,
+		HelpFn:         fs.Usage,
 	}
 
 	return cfg, nil
@@ -128,10 +130,13 @@ func execute(ctx context.Context, cfg *Config) error {
 	}
 
 	// Parse local state
-	state, err := parser.Parse(cfg.FilePath, cfg.InstanceIDs)
+	state, err := parser.Parse(cfg.FilePath, cfg.HCLInstanceIDs)
 	if err != nil {
 		return fmt.Errorf("failed to parse file: %w", err)
 	}
+
+	logger.Info(ctx, fmt.Sprintf("Found %d instances in file", len(state)), "file", cfg.FilePath)
+	logger.Info(ctx, "Fetching live instances...")
 
 	// Fetch live ec2 resources
 	live, err := cfg.Fetcher.Fetch(ctx)
@@ -139,10 +144,14 @@ func execute(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("failed to fetch live EC2 instances: %w", err)
 	}
 
+	logger.Info(ctx, fmt.Sprintf("Found %d live instances", len(live)))
+
 	// Use all supported attributes if none are specified.
 	if len(cfg.Attributes) == 0 {
 		cfg.Attributes = supportedAttributes()
 	}
+
+	logger.Info(ctx, "Checking for drifts...")
 
 	// Check for drifts and report
 	reports := cfg.Checker.CheckDrift(ctx, live, state, cfg.Attributes)

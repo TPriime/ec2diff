@@ -15,7 +15,7 @@ import (
 func TestRun_Args(t *testing.T) {
 	t.Run("should show usage", func(t *testing.T) {
 		var out bytes.Buffer
-		err := run([]string{"-h"}, &out)
+		err := run(t.Context(), []string{"-h"}, &out)
 
 		assert.NoError(t, err)
 		assert.Contains(t, out.String(), "Usage")
@@ -23,7 +23,7 @@ func TestRun_Args(t *testing.T) {
 
 	t.Run("should list attributes", func(t *testing.T) {
 		var out bytes.Buffer
-		err := run([]string{"-list-attributes"}, &out)
+		err := run(t.Context(), []string{"-list-attributes"}, &out)
 
 		assert.NoError(t, err)
 		assert.Contains(t, out.String(), "Supported attributes")
@@ -32,7 +32,7 @@ func TestRun_Args(t *testing.T) {
 
 	t.Run("should invalidate attributes", func(t *testing.T) {
 		var out bytes.Buffer
-		err := run([]string{
+		err := run(t.Context(), []string{
 			"-file", "test.tfstate",
 			"-attrs", "unsupported_attr",
 		}, &out)
@@ -43,7 +43,7 @@ func TestRun_Args(t *testing.T) {
 
 	t.Run("should reject missing file and print usage", func(t *testing.T) {
 		var out bytes.Buffer
-		err := run([]string{"-instances", "i-123"}, &out)
+		err := run(t.Context(), []string{"-instances", "i-123"}, &out)
 
 		assert.Error(t, err)
 		assert.Contains(t, out.String(), "Usage")
@@ -57,18 +57,16 @@ func TestExecute_SuccessfulWithNoDrifts(t *testing.T) {
 	parser := &mocks.MockParser{Parsed: state, Extensions: []string{".tfstate"}}
 	fetcher := &mocks.MockLiveFetcher{Instances: live}
 	printer := &mocks.MockReportPrinter{}
-	out := &bytes.Buffer{}
 
 	cfg := &Config{
-		FilePath:      "data.tfstate",
-		InstanceIDs:   []string{"i-abc"},
-		Attributes:    []string{pkg.AttrInstanceState},
-		Writer:        out,
-		Registry:      registry.NewParserRegistry([]pkg.Parser{parser}),
-		Fetcher:       fetcher,
-		Checker:       &mocks.MockDriftChecker{},
-		ReportPrinter: printer,
-		HelpFn:        func() {},
+		FilePath:       "data.tfstate",
+		HCLInstanceIDs: []string{"i-abc"},
+		Attributes:     []string{pkg.AttrInstanceState},
+		Registry:       registry.NewParserRegistry([]pkg.Parser{parser}),
+		Fetcher:        fetcher,
+		Checker:        &mocks.MockDriftChecker{},
+		ReportPrinter:  printer,
+		HelpFn:         func() {},
 	}
 
 	err := execute(context.Background(), cfg)
@@ -83,7 +81,6 @@ func TestExecute_MissingFile(t *testing.T) {
 	called := false
 	cfg := &Config{
 		FilePath: "",
-		Writer:   &bytes.Buffer{},
 		HelpFn:   func() { called = true },
 	}
 	err := execute(context.Background(), cfg)
@@ -95,7 +92,6 @@ func TestExecute_UnsupportedExtension(t *testing.T) {
 	reg := registry.NewParserRegistry([]pkg.Parser{})
 	cfg := &Config{
 		FilePath: "unsupported.txt",
-		Writer:   &bytes.Buffer{},
 		Registry: reg,
 	}
 	err := execute(context.Background(), cfg)
@@ -108,7 +104,6 @@ func TestExecute_ParseFails(t *testing.T) {
 	reg := registry.NewParserRegistry([]pkg.Parser{parser})
 	cfg := &Config{
 		FilePath: "file.tfstate",
-		Writer:   &bytes.Buffer{},
 		Registry: reg,
 	}
 	err := execute(context.Background(), cfg)
@@ -123,7 +118,6 @@ func TestExecute_FetchFails(t *testing.T) {
 
 	cfg := &Config{
 		FilePath: "file.tfstate",
-		Writer:   &bytes.Buffer{},
 		Registry: reg,
 		Fetcher:  fetcher,
 		HelpFn:   func() {},

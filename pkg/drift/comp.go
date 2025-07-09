@@ -33,7 +33,7 @@ func compareState(id string, stateA, stateB state, attrs []string) pkg.Report {
 			continue
 		}
 		if _, ok := stateA[attr]; !ok {
-			drifts = append(drifts, pkg.AttributeDrift{Name: attr, Expected: "<empty>", Found: stateB[attr]})
+			drifts = append(drifts, pkg.AttributeDrift{Name: attr, Expected: "-", Found: stateB[attr]})
 		}
 	}
 

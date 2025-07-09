@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/tpriime/ec2diff/pkg"
+	"github.com/tpriime/ec2diff/pkg/logger"
 )
 
 // driftChecker implements the DriftChecker interface.
@@ -19,6 +20,8 @@ func NewDriftChecker() pkg.DriftChecker {
 //
 // It returns a list of reports indicating changed or missing attributes.
 func (d driftChecker) CheckDrift(ctx context.Context, liveInstances, stateInstances pkg.InstanceMap, attributes []string) []pkg.Report {
+	ctx = logger.With(ctx, "op", "drift.CheckDrift")
+
 	// Channel to collect drift reports safely from goroutines.
 	results := make(chan pkg.Report, len(stateInstances))
 	var wg sync.WaitGroup
@@ -30,10 +33,13 @@ func (d driftChecker) CheckDrift(ctx context.Context, liveInstances, stateInstan
 			defer wg.Done()
 			var report pkg.Report
 
+			logger.Info(ctx, "Comparing live and state for instance", "instanceID", instanceID)
+
 			// Compare against state instance if found, else report as missing.
 			if stateInst, found := stateInstances[id]; found {
 				report = compareState(id, instanceToState(liveInstances[id]), instanceToState(stateInst), attributes)
 			} else {
+				logger.Info(ctx, "Instance missing in state", "instanceID", instanceID)
 				report = reportMissing(id, instanceToState(liveInstances[id]), attributes)
 			}
 
@@ -52,5 +58,8 @@ func (d driftChecker) CheckDrift(ctx context.Context, liveInstances, stateInstan
 	for r := range results {
 		reports = append(reports, r)
 	}
+
+	logger.Info(ctx, "Report gathered")
+
 	return reports
 }
