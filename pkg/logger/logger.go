@@ -11,7 +11,7 @@ import (
 type Level = slog.Level
 
 const (
-	LevelInfo Level = slog.LevelInfo
+	LevelInfo   Level = slog.LevelInfo
 	LevelSilent Level = slog.LevelError
 )
 

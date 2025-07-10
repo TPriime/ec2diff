@@ -24,7 +24,7 @@ func TestCheckDrift_NoDrift(t *testing.T) {
 	live := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "my-key")}
 	state := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "my-key")}
 
-	reports := NewDriftChecker().CheckDrift(t.Context(), live, state, []string{"Type", "State", "KeyName"})
+	reports := NewDriftChecker(2).CheckDrift(t.Context(), live, state, []string{"Type", "State", "KeyName"})
 
 	assert.Len(t, reports, 1)
 	assert.Empty(t, reports[0].Drifts)
@@ -34,7 +34,7 @@ func TestCheckDrift_AttributeDrift(t *testing.T) {
 	live := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "stopped", "my-key")}
 	state := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "my-key")}
 
-	reports := NewDriftChecker().CheckDrift(t.Context(), live, state, []string{pkg.AttrInstanceState})
+	reports := NewDriftChecker(2).CheckDrift(t.Context(), live, state, []string{pkg.AttrInstanceState})
 
 	assert.Len(t, reports, 1)
 	assert.Len(t, reports[0].Drifts, 1)
@@ -50,7 +50,7 @@ func TestCheckDrift_MissingInstance(t *testing.T) {
 		"i-1": mockState("i-1", "t2.micro", "running", "key"),
 	}
 
-	reports := NewDriftChecker().CheckDrift(t.Context(), live, state,
+	reports := NewDriftChecker(2).CheckDrift(t.Context(), live, state,
 		[]string{pkg.AttrInstanceType, pkg.AttrInstanceState})
 
 	assert.Len(t, reports, 2)
@@ -68,7 +68,7 @@ func TestCheckDrift_CustomAttributes(t *testing.T) {
 	live := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "key1")}
 	state := pkg.InstanceMap{"i-1": mockState("i-1", "t2.micro", "running", "key2")}
 
-	reports := NewDriftChecker().CheckDrift(t.Context(), live, state, []string{"State"})
+	reports := NewDriftChecker(2).CheckDrift(t.Context(), live, state, []string{"State"})
 
 	assert.Empty(t, reports[0].Drifts)
 }

@@ -30,11 +30,12 @@ type MockLiveFetcher struct {
 	Err       error
 }
 
-func (m *MockLiveFetcher) Fetch(_ context.Context) (pkg.InstanceMap, error) {
+func (m *MockLiveFetcher) Fetch(_ context.Context, onPpageFn func(page int, instances pkg.InstanceMap) bool) error {
 	if m.Err != nil {
-		return nil, m.Err
+		return m.Err
 	}
-	return m.Instances, nil
+	onPpageFn(1, m.Instances)
+	return nil
 }
 
 // MockReportPrinter implements pkg.ReportPrinter for testing

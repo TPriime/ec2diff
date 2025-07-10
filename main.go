@@ -21,6 +21,14 @@ import (
 	"github.com/tpriime/ec2diff/registry"
 )
 
+const (
+	// Page size per remote or live fetch. Must be greater than 5
+	fetchPageSize = 5
+
+	// Number of concurrent workers. Tune this based on system capacity
+	driftCheckWorkers = 2
+)
+
 func main() {
 	logger.Init(logger.LevelInfo)
 	ctx := logger.With(context.Background())
@@ -42,7 +50,7 @@ type Config struct {
 
 	// Dependencies
 	Registry      *registry.ParserRegistry
-	Fetcher       pkg.LiveFetcher
+	Fetcher       pkg.PaginatedLiveFetcher
 	Checker       pkg.DriftChecker
 	ReportPrinter pkg.ReportPrinter
 	HelpFn        func()
@@ -76,11 +84,11 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		tfstate.NewTfStateParser(),
 		hcl.NewHclParser(),
 	})
-	cfg.Fetcher, err = aws.NewAwsFetcher(ctx)
+	cfg.Fetcher, err = aws.NewAwsFetcher(ctx, fetchPageSize)
 	if err != nil {
 		return fmt.Errorf("failed to init AWS client: %w", err)
 	}
-	cfg.Checker = drift.NewDriftChecker()
+	cfg.Checker = drift.NewDriftChecker(driftCheckWorkers)
 	cfg.ReportPrinter = tableprinter.NewTablePrinter(out)
 
 	return execute(ctx, cfg)
@@ -122,6 +130,8 @@ func execute(ctx context.Context, cfg *Config) error {
 
 	if err := validateAttributes(cfg.Attributes); err != nil {
 		return err
+	} else if len(cfg.Attributes) == 0 {
+		cfg.Attributes = supportedAttributes() // Use all supported attributes if none are specified.
 	}
 
 	parser, ok := cfg.Registry.Get(cfg.FilePath)
@@ -138,26 +148,34 @@ func execute(ctx context.Context, cfg *Config) error {
 	logger.Info(ctx, fmt.Sprintf("Found %d instances in file", len(state)), "file", cfg.FilePath)
 	logger.Info(ctx, "Fetching live instances...")
 
-	// Fetch live ec2 resources
-	live, err := cfg.Fetcher.Fetch(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch live EC2 instances: %w", err)
+	var reports []pkg.Report
+	if reports, err = fetchAndGatherReports(ctx, cfg, state); err != nil {
+		return fmt.Errorf("failed to check drifts: %w", err)
 	}
 
-	logger.Info(ctx, fmt.Sprintf("Found %d live instances", len(live)))
+	logger.Info(ctx, fmt.Sprintf("Gathered %d reports", len(reports)))
 
-	// Use all supported attributes if none are specified.
-	if len(cfg.Attributes) == 0 {
-		cfg.Attributes = supportedAttributes()
-	}
-
-	logger.Info(ctx, "Checking for drifts...")
-
-	// Check for drifts and report
-	reports := cfg.Checker.CheckDrift(ctx, live, state, cfg.Attributes)
+	// Display report
 	cfg.ReportPrinter.Print(reports)
 
 	return nil
+}
+
+// fetchAndGatherReports fetches live ec2 resources and checks for drifts per page
+func fetchAndGatherReports(ctx context.Context, cfg *Config, state pkg.InstanceMap) ([]pkg.Report, error) {
+	reports := []pkg.Report{}
+	err := cfg.Fetcher.Fetch(ctx, func(page int, live pkg.InstanceMap) bool {
+		ctx := logger.With(ctx, "page", page)
+		logger.Info(ctx, "Checking for drifts...")
+
+		// Check for drifts and report
+		rpts := cfg.Checker.CheckDrift(ctx, live, state, cfg.Attributes)
+
+		reports = append(reports, rpts...)
+		return true
+	})
+
+	return reports, err
 }
 
 // parseCommaSep splits a comma-separated string into a clean string slice.

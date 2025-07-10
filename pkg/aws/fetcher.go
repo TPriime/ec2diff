@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -11,7 +12,8 @@ import (
 
 // awsFetcher fetches EC2 instances from AWS.
 type awsFetcher struct {
-	client ec2API
+	client    ec2API
+	pageLimit int32
 }
 
 // ec2API defines the subset of EC2 client methods used.
@@ -25,35 +27,40 @@ type ec2API interface {
 }
 
 // NewAwsFetcher initializes an AWS EC2 client and returns a LiveFetcher.
-func NewAwsFetcher(ctx context.Context) (pkg.LiveFetcher, error) {
+func NewAwsFetcher(ctx context.Context, pageLimit int32) (pkg.PaginatedLiveFetcher, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load AWS config: %w", err)
 	}
 
-	return &awsFetcher{client: ec2.NewFromConfig(cfg)}, nil
+	return &awsFetcher{client: ec2.NewFromConfig(cfg), pageLimit: pageLimit}, nil
 }
 
-// Fetch retrieves all EC2 instances from AWS and maps them by instance ID.
-func (f *awsFetcher) Fetch(ctx context.Context) (pkg.InstanceMap, error) {
-	paginator := ec2.NewDescribeInstancesPaginator(f.client, &ec2.DescribeInstancesInput{})
-	instances := make(pkg.InstanceMap)
+// Fetch retrieves all EC2 instances from AWS in a paginated manner and maps them by instance ID.
+// - onPageFn declares function to run per pagination
+func (f *awsFetcher) Fetch(ctx context.Context, onPageFn func(page int, instances pkg.InstanceMap) bool) error {
+	paginator := ec2.NewDescribeInstancesPaginator(f.client, &ec2.DescribeInstancesInput{MaxResults: &f.pageLimit})
+	pageCount := 1
 
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get page: %w", err)
+			return fmt.Errorf("failed to get page %d: %w", pageCount, err)
 		}
 
+		instances := make(pkg.InstanceMap)
 		for _, reservation := range page.Reservations {
 			for _, instance := range reservation.Instances {
 				// Convert AWS instance to local model and store
 				instances[*instance.InstanceId] = toModel(instance)
 			}
 		}
+
+		onPageFn(pageCount, instances)
+		pageCount++
 	}
 
-	return instances, nil
+	return nil
 }
 
 // toModel maps an AWS EC2 instance to the local pkg.Instance type.

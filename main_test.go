@@ -125,7 +125,7 @@ func TestExecute_FetchFails(t *testing.T) {
 
 	err := execute(context.Background(), cfg)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to fetch")
+	assert.Contains(t, err.Error(), "failed to check drifts")
 }
 
 func TestParseCSV(t *testing.T) {

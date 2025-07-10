@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/stretchr/testify/assert"
+	"github.com/tpriime/ec2diff/pkg"
 )
 
 type MockEC2API struct {
@@ -24,12 +25,12 @@ func (m *MockEC2API) DescribeInstances(ctx context.Context, _ *ec2.DescribeInsta
 	return &output, nil
 }
 
-func NewMockClient(responseJson string) *awsFetcher {
+func NewMockAwsFetcher(responseJson string) *awsFetcher {
 	return &awsFetcher{client: &MockEC2API{mockReponseJson: responseJson}}
 }
 
 func TestGetInstance_Success(t *testing.T) {
-	client := NewMockClient(`
+	fetcher := NewMockAwsFetcher(`
 {
   "Reservations": [
     {
@@ -51,7 +52,14 @@ func TestGetInstance_Success(t *testing.T) {
     }
   ]
 }`)
-	result, err := client.Fetch(t.Context())
+
+	result := pkg.InstanceMap{}
+	err := fetcher.Fetch(t.Context(), func(page int, instances pkg.InstanceMap) bool {
+		for v := range instances {
+			result[v] = instances[v]
+		}
+		return true
+	})
 
 	assert.NoError(t, err)
 	assert.Contains(t, result, "i-0123456789abcdef0")
@@ -64,7 +72,7 @@ func TestGetInstance_Success(t *testing.T) {
 }
 
 func TestGetInstance_EmptyResponse(t *testing.T) {
-	client := NewMockClient(`
+	fetcher := NewMockAwsFetcher(`
 {
   "Reservations": [
     {
@@ -74,7 +82,13 @@ func TestGetInstance_EmptyResponse(t *testing.T) {
 }`,
 	)
 
-	result, err := client.Fetch(t.Context())
+	result := pkg.InstanceMap{}
+	err := fetcher.Fetch(t.Context(), func(page int, instances pkg.InstanceMap) bool {
+		for v := range instances {
+			result[v] = instances[v]
+		}
+		return true
+	})
 
 	assert.NoError(t, err)
 	assert.Len(t, result, 0)

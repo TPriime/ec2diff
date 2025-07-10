@@ -9,11 +9,14 @@ import (
 )
 
 // driftChecker implements the DriftChecker interface.
-type driftChecker struct{}
+type driftChecker struct {
+	// number of concurrent workers
+	workers int
+}
 
 // NewDriftChecker returns a new instance of driftChecker.
-func NewDriftChecker() pkg.DriftChecker {
-	return &driftChecker{}
+func NewDriftChecker(workers int) pkg.DriftChecker {
+	return &driftChecker{workers: workers}
 }
 
 // CheckDrift compares liveInstances with stateInstances to detect drift.
@@ -22,44 +25,52 @@ func NewDriftChecker() pkg.DriftChecker {
 func (d driftChecker) CheckDrift(ctx context.Context, liveInstances, stateInstances pkg.InstanceMap, attributes []string) []pkg.Report {
 	ctx = logger.With(ctx, "op", "drift.CheckDrift")
 
-	// Channel to collect drift reports safely from goroutines.
-	results := make(chan pkg.Report, len(stateInstances))
+	jobs := make(chan string, len(liveInstances))
+	results := make(chan pkg.Report, len(liveInstances))
+
 	var wg sync.WaitGroup
 
-	// Launch drift checks concurrently for each live instance.
-	for instanceID := range liveInstances {
+	// Start a fixed pool of workers
+	for i := 0; i < d.workers; i++ {
 		wg.Add(1)
-		go func(id string) {
+		go func(workerID int) {
 			defer wg.Done()
-			var report pkg.Report
+			for instanceID := range jobs {
+				var report pkg.Report
+				logger.Info(ctx, "Comparing live and state for instance", "worker", workerID, "instanceID", instanceID)
 
-			logger.Info(ctx, "Comparing live and state for instance", "instanceID", instanceID)
+				if stateInst, found := stateInstances[instanceID]; found {
+					report = compareState(instanceID, instanceToState(liveInstances[instanceID]), instanceToState(stateInst), attributes)
+				} else {
+					logger.Info(ctx, "Instance missing in state", "worker", workerID, "instanceID", instanceID)
+					report = reportMissing(instanceID, instanceToState(liveInstances[instanceID]), attributes)
+				}
 
-			// Compare against state instance if found, else report as missing.
-			if stateInst, found := stateInstances[id]; found {
-				report = compareState(id, instanceToState(liveInstances[id]), instanceToState(stateInst), attributes)
-			} else {
-				logger.Info(ctx, "Instance missing in state", "instanceID", instanceID)
-				report = reportMissing(id, instanceToState(liveInstances[id]), attributes)
+				results <- report
 			}
-
-			results <- report
-		}(instanceID)
+		}(i)
 	}
 
-	// Close results channel once all goroutines finish.
+	// Feed jobs to the queue
+	go func() {
+		for instanceID := range liveInstances {
+			jobs <- instanceID
+		}
+		close(jobs)
+	}()
+
+	// Wait for workers to finish and close results
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	// Gather and return all reports.
+	// Collect the results
 	var reports []pkg.Report
 	for r := range results {
 		reports = append(reports, r)
 	}
 
-	logger.Info(ctx, "Report gathered")
-
+	logger.Info(ctx, "Drift reports collected", "reports", len(reports))
 	return reports
 }
