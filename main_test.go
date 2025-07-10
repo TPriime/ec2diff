@@ -59,14 +59,13 @@ func TestExecute_SuccessfulWithNoDrifts(t *testing.T) {
 	printer := &mocks.MockReportPrinter{}
 
 	cfg := &Config{
-		FilePath:       "data.tfstate",
-		HCLInstanceIDs: []string{"i-abc"},
-		Attributes:     []string{pkg.AttrInstanceState},
-		Registry:       registry.NewParserRegistry([]pkg.Parser{parser}),
-		Fetcher:        fetcher,
-		Checker:        &mocks.MockDriftChecker{},
-		ReportPrinter:  printer,
-		HelpFn:         func() {},
+		FilePath:      "data.tfstate",
+		Attributes:    []string{pkg.AttrInstanceState},
+		Registry:      registry.NewParserRegistry([]pkg.Parser{parser}),
+		Fetcher:       fetcher,
+		Checker:       &mocks.MockDriftChecker{},
+		ReportPrinter: printer,
+		HelpFn:        func() {},
 	}
 
 	err := execute(context.Background(), cfg)

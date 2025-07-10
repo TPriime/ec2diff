@@ -49,7 +49,7 @@ func TestParseState(t *testing.T) {
 			tmp.Write([]byte(content))
 			tmp.Close()
 
-			instances, err := parser.Parse(tmp.Name(), nil)
+			instances, err := parser.Parse(tmp.Name())
 
 			assert.NoError(t, err)
 			assert.Len(t, instances, 2)
@@ -59,24 +59,6 @@ func TestParseState(t *testing.T) {
 			assert.Equal(t, "t2.large", instances["i-125"].Type)
 		})
 	}
-
-	t.Run("should filter out ids when supplied", func(t *testing.T) {
-		tmp, err := os.CreateTemp("", "state*.json")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer os.Remove(tmp.Name())
-		tmp.Write([]byte(content))
-		tmp.Close()
-
-		wanted := "i-125"
-		instances, err := parser.Parse(tmp.Name(), []string{wanted})
-
-		assert.NoError(t, err)
-		assert.Len(t, instances, 1)
-		assert.Contains(t, instances, wanted)
-		assert.Equal(t, "t2.large", instances[wanted].Type)
-	})
 }
 
 func TestSupportedTypes(t *testing.T) {

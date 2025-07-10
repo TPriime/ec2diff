@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"slices"
 
 	"github.com/tpriime/ec2diff/pkg"
 )
@@ -19,7 +18,7 @@ func NewTfStateParser() pkg.Parser {
 }
 
 // Parse loads a Terraform state file and maps matching aws_instance resources by ID.
-func (t tfStateParser) Parse(filePath string, instanceIDs []string) (map[string]pkg.Instance, error) {
+func (t tfStateParser) Parse(filePath string) (map[string]pkg.Instance, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
@@ -36,9 +35,7 @@ func (t tfStateParser) Parse(filePath string, instanceIDs []string) (map[string]
 			continue
 		}
 		for _, inst := range res.Instances {
-			if len(instanceIDs) == 0 || slices.Contains(instanceIDs, inst.Attributes.ID) {
-				out[inst.Attributes.ID] = inst.toInstance()
-			}
+			out[inst.Attributes.ID] = inst.toInstance()
 		}
 	}
 

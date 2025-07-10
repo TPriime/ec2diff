@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/tpriime/ec2diff/pkg"
+	"github.com/tpriime/ec2diff/pkg/logger"
 )
 
 // awsFetcher fetches EC2 instances from AWS.
@@ -43,9 +44,10 @@ func (f *awsFetcher) Fetch(ctx context.Context, onPageFn func(page int, instance
 	pageCount := 1
 
 	for paginator.HasMorePages() {
+		logger.Info(ctx, "Fetching next batch of aws instances...", "op", "awsFetcher.Fetch")
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to get page %d: %w", pageCount, err)
+			return fmt.Errorf("failed to fetch page %d: %w", pageCount, err)
 		}
 
 		instances := make(pkg.InstanceMap)

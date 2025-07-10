@@ -14,7 +14,6 @@ import (
 	"github.com/tpriime/ec2diff/pkg"
 	"github.com/tpriime/ec2diff/pkg/aws"
 	"github.com/tpriime/ec2diff/pkg/drift"
-	"github.com/tpriime/ec2diff/pkg/hcl"
 	"github.com/tpriime/ec2diff/pkg/logger"
 	"github.com/tpriime/ec2diff/pkg/tableprinter"
 	"github.com/tpriime/ec2diff/pkg/tfstate"
@@ -23,10 +22,10 @@ import (
 
 const (
 	// Page size per remote or live fetch. Must be greater than 5
-	fetchPageSize = 5
+	fetchPageSize = 100
 
 	// Number of concurrent workers. Tune this based on system capacity
-	driftCheckWorkers = 2
+	driftCheckWorkers = 4
 )
 
 func main() {
@@ -42,11 +41,10 @@ func main() {
 // Config holds parsed inputs and injected dependencies for drift checking.
 type Config struct {
 	// CLI args
-	FilePath       string   // Path to HCL or tfstate file
-	HCLInstanceIDs []string // EC2 instance IDs to map HCL resources to
-	Attributes     []string // EC2 attributes to compare
-	ShowHelp       bool     // Whether to display CLI help
-	ListAttrs      bool     // Whether to list supported attributes
+	FilePath   string   // Path to HCL or tfstate file
+	Attributes []string // EC2 attributes to compare
+	ShowHelp   bool     // Whether to display CLI help
+	ListAttrs  bool     // Whether to list supported attributes
 
 	// Dependencies
 	Registry      *registry.ParserRegistry
@@ -82,7 +80,6 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	logger.Debug(ctx, "initalzing dependencies")
 	cfg.Registry = registry.NewParserRegistry([]pkg.Parser{
 		tfstate.NewTfStateParser(),
-		hcl.NewHclParser(),
 	})
 	cfg.Fetcher, err = aws.NewAwsFetcher(ctx, fetchPageSize)
 	if err != nil {
@@ -100,7 +97,6 @@ func parseFlags(args []string, out io.Writer) (*Config, error) {
 	fs.SetOutput(out)
 
 	file := fs.String("file", "", "Path to file (.hcl or .tfstate).")
-	hclIDs := fs.String("idset", "", "Comma-separated instanceIDs for HCL resources, ignored for other file types.")
 	attrs := fs.String("attrs", "", "Comma-separated attributes to check.")
 	listAttrs := fs.Bool("list-attributes", false, "List supported attributes.")
 	showHelp := fs.Bool("h", false, "Show help.")
@@ -110,18 +106,17 @@ func parseFlags(args []string, out io.Writer) (*Config, error) {
 	}
 
 	cfg := &Config{
-		FilePath:       *file,
-		HCLInstanceIDs: parseCommaSep(*hclIDs),
-		Attributes:     parseCommaSep(*attrs),
-		ListAttrs:      *listAttrs,
-		ShowHelp:       *showHelp,
-		HelpFn:         fs.Usage,
+		FilePath:   *file,
+		Attributes: parseCommaSep(*attrs),
+		ListAttrs:  *listAttrs,
+		ShowHelp:   *showHelp,
+		HelpFn:     fs.Usage,
 	}
 
 	return cfg, nil
 }
 
-// execute performs the main comparison logic based on the provided Config.
+// execute performs the parse, fetch, check and report logic based on the provided Config.
 func execute(ctx context.Context, cfg *Config) error {
 	if cfg.FilePath == "" {
 		cfg.HelpFn()
@@ -140,20 +135,20 @@ func execute(ctx context.Context, cfg *Config) error {
 	}
 
 	// Parse local state
-	state, err := parser.Parse(cfg.FilePath, cfg.HCLInstanceIDs)
+	state, err := parser.Parse(cfg.FilePath)
 	if err != nil {
 		return fmt.Errorf("failed to parse file: %w", err)
 	}
 
 	logger.Info(ctx, fmt.Sprintf("Found %d instances in file", len(state)), "file", cfg.FilePath)
-	logger.Info(ctx, "Fetching live instances...")
 
-	var reports []pkg.Report
-	if reports, err = fetchAndGatherReports(ctx, cfg, state); err != nil {
+	// Fetch and compare instances
+	reports, err := fetchAndCompare(ctx, cfg, state)
+	if err != nil {
 		return fmt.Errorf("failed to check drifts: %w", err)
 	}
 
-	logger.Info(ctx, fmt.Sprintf("Gathered %d reports", len(reports)))
+	logger.Info(ctx, fmt.Sprintf("Generated %d reports in total", len(reports)))
 
 	// Display report
 	cfg.ReportPrinter.Print(reports)
@@ -161,12 +156,12 @@ func execute(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-// fetchAndGatherReports fetches live ec2 resources and checks for drifts per page
-func fetchAndGatherReports(ctx context.Context, cfg *Config, state pkg.InstanceMap) ([]pkg.Report, error) {
+// fetchAndCompare fetches live ec2 resources and checks for drifts per page
+func fetchAndCompare(ctx context.Context, cfg *Config, state pkg.InstanceMap) ([]pkg.Report, error) {
 	reports := []pkg.Report{}
 	err := cfg.Fetcher.Fetch(ctx, func(page int, live pkg.InstanceMap) bool {
-		ctx := logger.With(ctx, "page", page)
-		logger.Info(ctx, "Checking for drifts...")
+		ctx := logger.With(ctx, "batch", page)
+		logger.Info(ctx, "Checking for drifts in batch...")
 
 		// Check for drifts and report
 		rpts := cfg.Checker.CheckDrift(ctx, live, state, cfg.Attributes)

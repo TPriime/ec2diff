@@ -13,7 +13,7 @@ type MockParser struct {
 	Err        error
 }
 
-func (m *MockParser) Parse(path string, ids []string) (pkg.InstanceMap, error) {
+func (m *MockParser) Parse(path string) (pkg.InstanceMap, error) {
 	if m.Err != nil {
 		return nil, m.Err
 	}
@@ -30,11 +30,11 @@ type MockLiveFetcher struct {
 	Err       error
 }
 
-func (m *MockLiveFetcher) Fetch(_ context.Context, onPpageFn func(page int, instances pkg.InstanceMap) bool) error {
+func (m *MockLiveFetcher) Fetch(_ context.Context, onPageFn func(page int, instances pkg.InstanceMap) bool) error {
 	if m.Err != nil {
 		return m.Err
 	}
-	onPpageFn(1, m.Instances)
+	onPageFn(1, m.Instances)
 	return nil
 }
 
